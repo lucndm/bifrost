@@ -41614,6 +41614,138 @@
         }
       }
     },
+    "/api/session/sso/login": {
+      "get": {
+        "operationId": "ssoLogin",
+        "summary": "Start SSO login",
+        "description": "Starts the OIDC authorization code flow with PKCE (S256).\nRedirects the browser to the identity provider's authorization endpoint.\nRequires SSO to be enabled via auth_config.sso in the configuration.\n",
+        "tags": [
+          "Session"
+        ],
+        "security": [],
+        "responses": {
+          "302": {
+            "description": "Redirect to the identity provider's authorization endpoint"
+          },
+          "403": {
+            "description": "SSO login is not enabled",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BifrostError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BifrostError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Failed to reach the identity provider for OIDC discovery",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BifrostError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/session/sso/callback": {
+      "get": {
+        "operationId": "ssoCallback",
+        "summary": "SSO login callback",
+        "description": "OIDC redirect endpoint called by the identity provider after authorization.\nExchanges the authorization code, verifies the ID token (JWKS), applies the\nconfigured role gate (auth_config.sso.allowed_roles), and establishes a\ndashboard session cookie before redirecting to the dashboard.\n",
+        "tags": [
+          "Session"
+        ],
+        "security": [],
+        "parameters": [
+          {
+            "name": "code",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Authorization code issued by the identity provider"
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "State value that must match the browser's sso_state cookie"
+          }
+        ],
+        "responses": {
+          "302": {
+            "description": "Session established; redirects to the dashboard (/workspace)"
+          },
+          "400": {
+            "description": "Invalid or expired SSO login state (missing code, state mismatch, or missing PKCE verifier)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BifrostError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Token exchange or ID token verification failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BifrostError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "SSO login is not enabled, or the authenticated identity is missing a required role",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BifrostError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Failed to create the dashboard session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BifrostError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Failed to reach the identity provider",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BifrostError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/session/login": {
       "post": {
         "operationId": "login",
@@ -107828,6 +107960,11 @@
           },
           "has_valid_token": {
             "type": "boolean"
+          },
+          "auth_type": {
+            "type": "string",
+            "description": "Dashboard session auth mode. `sso` when OIDC single sign-on is enabled, `password` for local admin credentials, `none` when auth is disabled.",
+            "enum": ["sso", "password", "none"]
           }
         }
       },

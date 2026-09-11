@@ -1431,6 +1431,14 @@ func (s *BifrostHTTPServer) UpdateAuthConfig(ctx context.Context, authConfig *co
 	if authConfig.IsEnabled && (authConfig.AdminUserName == nil || authConfig.AdminUserName.GetValue() == "" || authConfig.AdminPassword == nil || authConfig.AdminPassword.GetValue() == "") {
 		return fmt.Errorf("username and password are required when auth is enabled")
 	}
+	// SSO config is managed via config.json; preserve it when a dashboard-only
+	// auth update (e.g. password change) sends no SSO config.
+	if authConfig.SSO == nil {
+		existingAuthConfig, err := s.Config.ConfigStore.GetAuthConfig(ctx)
+		if err == nil && existingAuthConfig != nil {
+			authConfig.SSO = existingAuthConfig.SSO
+		}
+	}
 	// Update the config store
 	if err := s.Config.ConfigStore.UpdateAuthConfig(ctx, authConfig); err != nil {
 		return err

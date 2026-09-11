@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/fasthttp/router"
 	"github.com/google/uuid"
 	"github.com/maximhq/bifrost/core/schemas"
@@ -19,8 +21,10 @@ import (
 
 // SessionHandler manages HTTP requests for session operations
 type SessionHandler struct {
-	configStore   configstore.ConfigStore
-	wsTicketStore *WSTicketStore
+	configStore    configstore.ConfigStore
+	wsTicketStore  *WSTicketStore
+	ssoProviders   map[string]*oidc.Provider
+	ssoProvidersMu sync.Mutex
 }
 
 // NewSessionHandler creates a new session handler instance
@@ -37,6 +41,8 @@ func (h *SessionHandler) RegisterRoutes(r *router.Router, middlewares ...schemas
 	r.POST("/api/session/logout", lib.ChainMiddlewares(h.logout, middlewares...))
 	r.GET("/api/session/is-auth-enabled", lib.ChainMiddlewares(h.isAuthEnabled, middlewares...))
 	r.POST("/api/session/ws-ticket", lib.ChainMiddlewares(h.issueWSTicket, middlewares...))
+	r.GET("/api/session/sso/login", lib.ChainMiddlewares(h.handleSSOLogin, middlewares...))
+	r.GET("/api/session/sso/callback", lib.ChainMiddlewares(h.handleSSOCallback, middlewares...))
 }
 
 // isAuthEnabled handles GET /api/session/is-auth-enabled - Check if auth is enabled
@@ -80,13 +86,16 @@ func (h *SessionHandler) isAuthEnabled(ctx *fasthttp.RequestCtx) {
 	SendJSON(ctx, map[string]any{
 		"is_auth_enabled": authConfig.IsEnabled,
 		"has_valid_token": hasValidToken,
-		"auth_type":       dashboardAuthType(authConfig.IsEnabled),
+		"auth_type":       dashboardAuthType(authConfig),
 	})
 }
 
 // dashboardAuthType reports the dashboard session auth mode for frontend flows.
-func dashboardAuthType(isEnabled bool) string {
-	if isEnabled {
+func dashboardAuthType(authConfig *configstore.AuthConfig) string {
+	if authConfig != nil && authConfig.SSO != nil && authConfig.SSO.Enabled {
+		return "sso"
+	}
+	if authConfig != nil && authConfig.IsEnabled {
 		return "password"
 	}
 	return "none"
@@ -117,6 +126,12 @@ func (h *SessionHandler) login(ctx *fasthttp.RequestCtx) {
 	// Check if auth is enabled
 	if authConfig == nil || !authConfig.IsEnabled {
 		SendError(ctx, fasthttp.StatusForbidden, "Authentication is not enabled")
+		return
+	}
+
+	// SSO-only mode: password login is disabled while SSO is active
+	if authConfig.SSO != nil && authConfig.SSO.Enabled {
+		SendError(ctx, fasthttp.StatusForbidden, "Password login is disabled. Sign in with SSO.")
 		return
 	}
 

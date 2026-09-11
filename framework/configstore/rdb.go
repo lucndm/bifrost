@@ -6344,6 +6344,7 @@ func (s *RDBConfigStore) GetGovernanceConfig(ctx context.Context) (*GovernanceCo
 		var username *string
 		var password *string
 		var isEnabled bool
+		var ssoConfig *AuthSSOConfig
 		for _, entry := range governanceConfigs {
 			switch entry.Key {
 			case tables.ConfigAdminUsernameKey:
@@ -6352,6 +6353,18 @@ func (s *RDBConfigStore) GetGovernanceConfig(ctx context.Context) (*GovernanceCo
 				password = bifrost.Ptr(entry.Value)
 			case tables.ConfigIsAuthEnabledKey:
 				isEnabled = entry.Value == "true"
+			case tables.ConfigAuthSSOConfigKey:
+				if strings.TrimSpace(entry.Value) == "" {
+					continue
+				}
+				decoded := &AuthSSOConfig{}
+				if err := json.Unmarshal([]byte(entry.Value), decoded); err != nil {
+					if s.logger != nil {
+						s.logger.Warn("failed to load auth sso config from governance_config: %v", err)
+					}
+					continue
+				}
+				ssoConfig = decoded
 			case tables.ConfigComplexityAnalyzerConfigKey:
 				if strings.TrimSpace(entry.Value) == "" {
 					continue
@@ -6408,6 +6421,14 @@ func (s *RDBConfigStore) GetGovernanceConfig(ctx context.Context) (*GovernanceCo
 				AdminUserName: schemas.NewSecretVar(*username),
 				AdminPassword: schemas.NewSecretVar(*password),
 				IsEnabled:     isEnabled,
+				SSO:           ssoConfig,
+			}
+		} else if ssoConfig != nil && ssoConfig.Enabled {
+			// SSO-only deployments have no admin credentials; auth is enforced
+			// via the OIDC identity provider instead.
+			authConfig = &AuthConfig{
+				IsEnabled: true,
+				SSO:       ssoConfig,
 			}
 		}
 	}
@@ -6725,6 +6746,7 @@ func (s *RDBConfigStore) GetAuthConfig(ctx context.Context) (*AuthConfig, error)
 	var username *string
 	var password *string
 	var isEnabled bool
+	var ssoRaw *string
 	if err := s.DB().WithContext(ctx).First(&tables.TableGovernanceConfig{}, "key = ?", tables.ConfigAdminUsernameKey).Select("value").Scan(&username).Error; err != nil {
 		if !errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, err
@@ -6740,17 +6762,38 @@ func (s *RDBConfigStore) GetAuthConfig(ctx context.Context) (*AuthConfig, error)
 			return nil, err
 		}
 	}
-	if username == nil || password == nil {
+	if err := s.DB().WithContext(ctx).First(&tables.TableGovernanceConfig{}, "key = ?", tables.ConfigAuthSSOConfigKey).Select("value").Scan(&ssoRaw).Error; err != nil {
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, err
+		}
+	}
+	if (username == nil || password == nil) && ssoRaw == nil {
 		return nil, nil
 	}
-	return &AuthConfig{
-		AdminUserName: schemas.NewSecretVar(*username),
-		AdminPassword: schemas.NewSecretVar(*password),
-		IsEnabled:     isEnabled,
-	}, nil
+	var ssoConfig *AuthSSOConfig
+	if ssoRaw != nil && strings.TrimSpace(*ssoRaw) != "" {
+		ssoConfig = &AuthSSOConfig{}
+		if err := json.Unmarshal([]byte(*ssoRaw), ssoConfig); err != nil {
+			return nil, fmt.Errorf("failed to decode auth sso config: %w", err)
+		}
+	}
+	if ssoConfig != nil && ssoConfig.Enabled {
+		// SSO implies auth is enforced; SSO-only deployments have no local admin credentials.
+		isEnabled = true
+	}
+	authConfig := &AuthConfig{
+		IsEnabled: isEnabled,
+		SSO:       ssoConfig,
+	}
+	if username != nil && password != nil {
+		authConfig.AdminUserName = schemas.NewSecretVar(*username)
+		authConfig.AdminPassword = schemas.NewSecretVar(*password)
+	}
+	return authConfig, nil
 }
 
 // UpdateAuthConfig updates the auth configuration in the database.
+// A nil SSO config removes the stored SSO config.
 func (s *RDBConfigStore) UpdateAuthConfig(ctx context.Context, config *AuthConfig) error {
 	return s.DB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Save(&tables.TableGovernanceConfig{
@@ -6771,7 +6814,20 @@ func (s *RDBConfigStore) UpdateAuthConfig(ctx context.Context, config *AuthConfi
 		}).Error; err != nil {
 			return err
 		}
-		return nil
+		if config.SSO == nil {
+			if err := tx.Where("key = ?", tables.ConfigAuthSSOConfigKey).Delete(&tables.TableGovernanceConfig{}).Error; err != nil {
+				return err
+			}
+			return nil
+		}
+		raw, err := json.Marshal(config.SSO)
+		if err != nil {
+			return fmt.Errorf("failed to encode auth sso config: %w", err)
+		}
+		return tx.Save(&tables.TableGovernanceConfig{
+			Key:   tables.ConfigAuthSSOConfigKey,
+			Value: string(raw),
+		}).Error
 	})
 }
 

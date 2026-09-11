@@ -6,6 +6,9 @@ const (
 	ConfigAdminUsernameKey = "admin_username"
 	ConfigAdminPasswordKey = "admin_password"
 	ConfigIsAuthEnabledKey = "is_auth_enabled"
+	// ConfigAuthSSOConfigKey stores the dashboard SSO (OIDC) config as a JSON
+	// blob. See configstore.AuthSSOConfig.
+	ConfigAuthSSOConfigKey = "auth_sso_config"
 	ConfigProxyKey         = "proxy_config"
 	// ConfigComplexityAnalyzerConfigKey stores the persisted analyzer config JSON.
 	//
@@ -59,8 +62,8 @@ const (
 	//
 	// Written under a distributed lock because every node updates the same row.
 	ConfigComplexitySemanticGenerationsKey = "complexity_semantic_generations"
-	ConfigRestartRequiredKey              = "restart_required"
-	ConfigHeaderFilterKey                 = "header_filter_config"
+	ConfigRestartRequiredKey               = "restart_required"
+	ConfigHeaderFilterKey                  = "header_filter_config"
 )
 
 // Keys for the ClientConfig.MetadataJSON blob.

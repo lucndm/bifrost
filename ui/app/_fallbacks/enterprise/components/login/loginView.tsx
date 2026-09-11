@@ -2,8 +2,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useBranding } from "@/lib/hooks/useBranding";
-import { getErrorMessage, useLoginMutation } from "@/lib/store/apis";
-import { BooksIcon, DiscordLogoIcon, GithubLogoIcon } from "@phosphor-icons/react";
+import { getErrorMessage, useIsAuthEnabledQuery, useLoginMutation } from "@/lib/store/apis";
+import { BooksIcon, DiscordLogoIcon, GithubLogoIcon, SignInIcon } from "@phosphor-icons/react";
 import { useNavigate } from "@tanstack/react-router";
 import { Eye, EyeOff } from "lucide-react";
 import { useTheme } from "next-themes";
@@ -38,6 +38,8 @@ export default function LoginView() {
 	const navigate = useNavigate();
 	const [isLoading, setIsLoading] = useState(false);
 	const [login, { isLoading: isLoggingIn }] = useLoginMutation();
+	const { data: authState } = useIsAuthEnabledQuery();
+	const isSSO = authState?.auth_type === "sso";
 
 	useEffect(() => {
 		setMounted(true);
@@ -74,55 +76,75 @@ export default function LoginView() {
 						<p className="text-muted-foreground text-sm">Sign in to your account to continue</p>
 					</div>
 
-					<form onSubmit={handleSubmit} className="space-y-5">
-						{errorMessage && <div className="bg-destructive/10 text-destructive rounded-sm p-3 text-sm">{errorMessage}</div>}
-
-						<div className="space-y-2">
-							<Label htmlFor="username" className="text-sm font-medium">
-								Username
-							</Label>
-							<Input
-								id="username"
-								type="text"
-								placeholder="Enter your username"
-								value={username}
-								onChange={(e) => setUsername(e.target.value)}
-								required
-								className="text-sm"
-								autoComplete="username"
-							/>
+					{isSSO ? (
+						<div className="space-y-5">
+							{errorMessage && <div className="bg-destructive/10 text-destructive rounded-sm p-3 text-sm">{errorMessage}</div>}
+							<Button
+								type="button"
+								className="h-9 w-full text-sm"
+								onClick={() => {
+									setIsLoading(true);
+									window.location.href = "/api/session/sso/login";
+								}}
+								isLoading={isLoading}
+								disabled={isLoading}
+								data-testid="login-sso-button"
+							>
+								<SignInIcon className="h-4 w-4" />
+								{isLoading ? "Redirecting..." : "Sign in with SSO"}
+							</Button>
 						</div>
+					) : (
+						<form onSubmit={handleSubmit} className="space-y-5">
+							{errorMessage && <div className="bg-destructive/10 text-destructive rounded-sm p-3 text-sm">{errorMessage}</div>}
 
-						<div className="space-y-2">
-							<Label htmlFor="password" className="text-sm font-medium">
-								Password
-							</Label>
-							<div className="relative">
+							<div className="space-y-2">
+								<Label htmlFor="username" className="text-sm font-medium">
+									Username
+								</Label>
 								<Input
-									id="password"
-									type={showPassword ? "text" : "password"}
-									placeholder="Enter your password"
-									value={password}
-									onChange={(e) => setPassword(e.target.value)}
+									id="username"
+									type="text"
+									placeholder="Enter your username"
+									value={username}
+									onChange={(e) => setUsername(e.target.value)}
 									required
-									className="pr-10 text-sm"
-									autoComplete="current-password"
+									className="text-sm"
+									autoComplete="username"
 								/>
-								<button
-									type="button"
-									onClick={() => setShowPassword(!showPassword)}
-									className="text-muted-foreground hover:text-foreground absolute top-1/2 right-3 -translate-y-1/2 transition-colors"
-									aria-label={showPassword ? "Hide password" : "Show password"}
-								>
-									{showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-								</button>
 							</div>
-						</div>
 
-						<Button type="submit" className="h-9 w-full text-sm" isLoading={isLoading} disabled={isLoading}>
-							{isLoading || isLoggingIn ? "Signing in..." : "Sign in"}
-						</Button>
-					</form>
+							<div className="space-y-2">
+								<Label htmlFor="password" className="text-sm font-medium">
+									Password
+								</Label>
+								<div className="relative">
+									<Input
+										id="password"
+										type={showPassword ? "text" : "password"}
+										placeholder="Enter your password"
+										value={password}
+										onChange={(e) => setPassword(e.target.value)}
+										required
+										className="pr-10 text-sm"
+										autoComplete="current-password"
+									/>
+									<button
+										type="button"
+										onClick={() => setShowPassword(!showPassword)}
+										className="text-muted-foreground hover:text-foreground absolute top-1/2 right-3 -translate-y-1/2 transition-colors"
+										aria-label={showPassword ? "Hide password" : "Show password"}
+									>
+										{showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+									</button>
+								</div>
+							</div>
+
+							<Button type="submit" className="h-9 w-full text-sm" isLoading={isLoading} disabled={isLoading}>
+								{isLoading || isLoggingIn ? "Signing in..." : "Sign in"}
+							</Button>
+						</form>
+					)}
 
 					{/* Social Links */}
 					<div className="flex items-center justify-center gap-4 pt-4">

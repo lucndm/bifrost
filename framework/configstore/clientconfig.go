@@ -1936,11 +1936,27 @@ func GenerateFrameworkConfigHash(pricingURL *string, modelParametersURL *string,
 	return hex.EncodeToString(h[:]), nil
 }
 
+// AuthSSOConfig configures OIDC single sign-on (SSO) login for the dashboard.
+// When Enabled, password login is disabled and sessions are established via the
+// configured OIDC identity provider (e.g. Zitadel) using the authorization code
+// flow with PKCE. AllowedRoles gates which identities may log in.
+type AuthSSOConfig struct {
+	Enabled      bool               `json:"enabled"`
+	IssuerURL    string             `json:"issuer_url"`
+	ClientID     string             `json:"client_id"`
+	ClientSecret *schemas.SecretVar `json:"client_secret,omitempty"`
+	RedirectURL  string             `json:"redirect_url,omitempty"`
+	Scopes       []string           `json:"scopes,omitempty"`
+	RoleClaim    string             `json:"role_claim,omitempty"`
+	AllowedRoles []string           `json:"allowed_roles,omitempty"`
+}
+
 // AuthConfig represents configured auth config for Bifrost dashboard
 type AuthConfig struct {
 	AdminUserName *schemas.SecretVar `json:"admin_username"`
 	AdminPassword *schemas.SecretVar `json:"admin_password"`
 	IsEnabled     bool               `json:"is_enabled"`
+	SSO           *AuthSSOConfig     `json:"sso,omitempty"`
 }
 
 // ConfigMap maps provider names to their configurations.

@@ -4543,6 +4543,7 @@ func loadAuthConfig(ctx context.Context, config *Config, configData *ConfigData)
 	if dbAuthConfig != nil {
 		usernameMatch := dbAuthConfig.AdminUserName.GetValue() == authConfig.AdminUserName.GetValue()
 		boolsMatch := dbAuthConfig.IsEnabled == authConfig.IsEnabled
+		ssoMatch := authSSOConfigsEqual(dbAuthConfig.SSO, authConfig.SSO)
 		var passwordMatch bool
 		if filePassword == "" {
 			passwordMatch = dbAuthConfig.AdminPassword.GetValue() == ""
@@ -4551,12 +4552,13 @@ func loadAuthConfig(ctx context.Context, config *Config, configData *ConfigData)
 		} else {
 			passwordMatch, _ = encrypt.CompareHash(dbAuthConfig.AdminPassword.GetValue(), filePassword)
 		}
-		if usernameMatch && passwordMatch && boolsMatch {
+		if usernameMatch && passwordMatch && boolsMatch && ssoMatch {
 			// DB matches file -- use DB hash but preserve file env var references
 			config.GovernanceConfig.AuthConfig = &configstore.AuthConfig{
 				AdminUserName: authConfig.AdminUserName,
 				AdminPassword: preserveSecretVar(authConfig.AdminPassword, dbAuthConfig.AdminPassword.GetValue()),
 				IsEnabled:     authConfig.IsEnabled,
+				SSO:           authConfig.SSO,
 			}
 			return
 		}
@@ -4586,11 +4588,30 @@ func loadAuthConfig(ctx context.Context, config *Config, configData *ConfigData)
 		AdminUserName: authConfig.AdminUserName,
 		AdminPassword: preserveSecretVar(authConfig.AdminPassword, hashedPassword),
 		IsEnabled:     authConfig.IsEnabled,
+		SSO:           authConfig.SSO,
 	}
 	// Persist to config store
 	if err := config.ConfigStore.UpdateAuthConfig(ctx, config.GovernanceConfig.AuthConfig); err != nil {
 		logger.Warn("failed to update auth config: %v", err)
 	}
+}
+
+// authSSOConfigsEqual compares two SSO configs by their canonical JSON encoding.
+// The file config is the source of truth, so any difference (including one side
+// being nil) means the DB row must be re-synced.
+func authSSOConfigsEqual(a, b *configstore.AuthSSOConfig) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	aRaw, err := json.Marshal(a)
+	if err != nil {
+		return false
+	}
+	bRaw, err := json.Marshal(b)
+	if err != nil {
+		return false
+	}
+	return string(aRaw) == string(bRaw)
 }
 
 // loadPlugins loads and merges plugins from file

@@ -4198,6 +4198,48 @@
           "type": "boolean",
           "deprecated": true,
           "description": "Deprecated and ignored. Use client_config.enforce_auth_on_inference instead."
+        },
+        "sso": {
+          "type": "object",
+          "description": "OIDC single sign-on (SSO) login for the dashboard. When enabled, password login is disabled and sessions are established via the configured OIDC identity provider (e.g. Zitadel) using the authorization code flow with PKCE.",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Whether SSO login is enabled. Implies auth is enabled; password login is rejected while SSO is active."
+            },
+            "issuer_url": {
+              "type": "string",
+              "description": "OIDC issuer URL of the identity provider (e.g., https://auth.company.com). OIDC discovery (.well-known/openid-configuration) resolves the authorization and token endpoints."
+            },
+            "client_id": {
+              "type": "string",
+              "description": "OAuth2/OIDC application client ID registered at the identity provider."
+            },
+            "client_secret": {
+              "type": "string",
+              "description": "OAuth2/OIDC client secret for confidential clients. Supports env. prefix for environment variable references. Leave empty for public clients (PKCE is always used)."
+            },
+            "redirect_url": {
+              "type": "string",
+              "description": "Callback URL registered at the identity provider. Leave empty to derive it from the incoming request host (https://<host>/api/session/sso/callback)."
+            },
+            "scopes": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "OIDC scopes requested during login. Default: openid, profile, email."
+            },
+            "role_claim": {
+              "type": "string",
+              "description": "ID token claim carrying role assignments used for the role gate. Default: urn:zitadel:iam:org:project:roles."
+            },
+            "allowed_roles": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Roles (from role_claim) that may establish a dashboard session. Empty disables the role gate: any authenticated identity from the issuer may log in."
+            }
+          },
+          "required": ["enabled", "issuer_url", "client_id"],
+          "additionalProperties": false
         }
       },
       "additionalProperties": false

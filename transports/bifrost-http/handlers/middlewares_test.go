@@ -748,6 +748,9 @@ func TestAuthMiddleware_WhitelistedRoutes(t *testing.T) {
 	whitelistedRoutes := []string{
 		"/api/session/is-auth-enabled",
 		"/api/session/login",
+		// SSO redirect + callback run before a session exists.
+		"/api/session/sso/login",
+		"/api/session/sso/callback",
 		// Logout is idempotent (clears the cookie, revokes the session if a
 		// token is present) and must never 401, or a repeat logout cascades
 		// into a redirect loop in the dashboard.
