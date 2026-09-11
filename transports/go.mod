@@ -20,6 +20,7 @@ require (
 	github.com/maximhq/bifrost/framework v1.6.2
 	github.com/maximhq/bifrost/plugins/compat v0.2.2
 	github.com/maximhq/bifrost/plugins/governance v1.7.2
+	github.com/maximhq/bifrost/plugins/guardrails v0.1.0
 	github.com/maximhq/bifrost/plugins/logging v1.7.2
 	github.com/maximhq/bifrost/plugins/maxim v1.7.2
 	github.com/maximhq/bifrost/plugins/modelcatalogresolver v1.1.2

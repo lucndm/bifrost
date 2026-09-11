@@ -9,6 +9,7 @@ import (
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/maximhq/bifrost/plugins/compat"
 	"github.com/maximhq/bifrost/plugins/governance"
+	"github.com/maximhq/bifrost/plugins/guardrails"
 	"github.com/maximhq/bifrost/plugins/logging"
 	"github.com/maximhq/bifrost/plugins/maxim"
 	"github.com/maximhq/bifrost/plugins/modelcatalogresolver"
@@ -150,6 +151,13 @@ func loadBuiltinPlugin(ctx context.Context, name string, pluginConfig any, bifro
 		}
 		return compat.Init(*compatConfig, logger, bifrostConfig.ModelCatalog)
 
+	case guardrails.PluginName:
+		guardrailsConfig, err := MarshalPluginConfig[guardrails.Config](pluginConfig)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal guardrails plugin config: %w", err)
+		}
+		return guardrails.Init(guardrailsConfig, logger)
+
 	case modelcatalogresolver.PluginName:
 		return modelcatalogresolver.Init(bifrostConfig.ModelCatalog, logger)
 
@@ -272,16 +280,27 @@ func (s *BifrostHTTPServer) loadBuiltinPlugins(ctx context.Context) error {
 	}
 	s.Config.SetPluginOrderInfo(otel.PluginName, builtinPlacement, schemas.Ptr(6))
 
-	// 7. Semantic Cache (if configured in PluginConfigs)
+	// 7. Guardrails (if configured in PluginConfigs). Must run after governance/routing so
+	// rules evaluate against resolved context, and before semantic cache so cache lookups
+	// cannot bypass input rules and only approved output is persisted to cache.
+	guardrailsConfigEntry := s.getPluginConfig(guardrails.PluginName)
+	if guardrailsConfigEntry != nil && guardrailsConfigEntry.Enabled {
+		s.registerPluginWithStatus(ctx, guardrails.PluginName, nil, guardrailsConfigEntry.Config, false)
+	} else {
+		s.markPluginDisabled(guardrails.PluginName)
+	}
+	s.Config.SetPluginOrderInfo(guardrails.PluginName, builtinPlacement, schemas.Ptr(7))
+
+	// 8. Semantic Cache (if configured in PluginConfigs)
 	semanticCacheConfig := s.getPluginConfig(semanticcache.PluginName)
 	if semanticCacheConfig != nil && semanticCacheConfig.Enabled {
 		s.registerPluginWithStatus(ctx, semanticcache.PluginName, nil, semanticCacheConfig.Config, false)
 	} else {
 		s.markPluginDisabled(semanticcache.PluginName)
 	}
-	s.Config.SetPluginOrderInfo(semanticcache.PluginName, builtinPlacement, schemas.Ptr(7))
+	s.Config.SetPluginOrderInfo(semanticcache.PluginName, builtinPlacement, schemas.Ptr(8))
 
-	// 8. Compat (if any compat feature is enabled in ClientConfig)
+	// 9. Compat (if any compat feature is enabled in ClientConfig)
 	cc := s.Config.ClientConfig.Compat
 	compatCfg := &compat.Config{
 		ConvertTextToChat:      cc.ConvertTextToChat,
@@ -291,9 +310,9 @@ func (s *BifrostHTTPServer) loadBuiltinPlugins(ctx context.Context) error {
 		AzureDeepseek:          cc.AzureDeepseek,
 	}
 	s.registerPluginWithStatus(ctx, compat.PluginName, nil, compatCfg, false)
-	s.Config.SetPluginOrderInfo(compat.PluginName, builtinPlacement, schemas.Ptr(8))
+	s.Config.SetPluginOrderInfo(compat.PluginName, builtinPlacement, schemas.Ptr(9))
 
-	// 9. Maxim (if configured in PluginConfigs)
+	// 10. Maxim (if configured in PluginConfigs)
 	maximConfig := s.getPluginConfig(maxim.PluginName)
 	if maximConfig != nil && maximConfig.Enabled {
 		s.registerPluginWithStatus(ctx, maxim.PluginName, nil, maximConfig.Config, false)
@@ -302,7 +321,7 @@ func (s *BifrostHTTPServer) loadBuiltinPlugins(ctx context.Context) error {
 	}
 	s.Config.SetPluginOrderInfo(maxim.PluginName, builtinPlacement, schemas.Ptr(9))
 
-	// 10. ModelCatalogResolver (last routing layer — fills req.Provider from catalog only when
+	// 11. ModelCatalogResolver (last routing layer — fills req.Provider from catalog only when
 	// no earlier routing plugin (governance routing rules, governance VK LB, enterprise LB)
 	// already set one. CEL rules can still match on provider == "" because this runs last.
 	// Requires a model catalog; only register when one is configured.

@@ -49,6 +49,7 @@ import (
 	"github.com/maximhq/bifrost/plugins/routing"
 	"github.com/maximhq/bifrost/plugins/routing/complexity"
 	"github.com/maximhq/bifrost/plugins/routing/rules"
+	"github.com/maximhq/bifrost/plugins/guardrails"
 	"github.com/maximhq/bifrost/plugins/semanticcache"
 	"github.com/maximhq/bifrost/plugins/telemetry"
 	"gorm.io/gorm"
@@ -129,6 +130,7 @@ var builtinPluginNames = []string{
 	logging.PluginName,
 	governance.PluginName,
 	otel.PluginName,
+	guardrails.PluginName,
 	semanticcache.PluginName,
 	compat.PluginName,
 	maxim.PluginName,
