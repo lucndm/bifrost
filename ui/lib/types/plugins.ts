@@ -8,10 +8,14 @@ export const TOKEN_SAVER_FILTERS = ["git-diff", "dedup-log", "smart-truncate"] a
 
 export type TokenSaverFilter = (typeof TOKEN_SAVER_FILTERS)[number];
 
+export interface TokenSaverSettings {
+	rtk?: boolean;
+}
+
 export interface TokenSaverConfig {
-	default?: {
-		rtk?: boolean;
-	};
+	default?: TokenSaverSettings;
+	virtual_keys?: Record<string, TokenSaverSettings>;
+	models?: Record<string, TokenSaverSettings>;
 	rtk_filters?: {
 		min_bytes?: number;
 		max_bytes?: number;

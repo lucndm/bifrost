@@ -15,6 +15,7 @@ import {
 	defaultTokenSaverFormValues,
 	toTokenSaverFormValues,
 	TokenSaverFormValues,
+	TokenSaverOverride,
 	validateTokenSaverForm,
 } from "./tokenSaverView.utils";
 
@@ -188,6 +189,24 @@ export default function TokenSaverView() {
 							/>
 						</div>
 
+						<OverrideSection
+							title="Per-model overrides"
+							description="Glob patterns matched against the routed model (longest pattern wins). Model overrides take precedence over virtual key overrides."
+							inputPlaceholder="claude-sonnet-*"
+							overrides={values.models}
+							disabled={!hasUpdateAccess || isSaving}
+							onChange={(models) => updateValues({ models })}
+						/>
+
+						<OverrideSection
+							title="Per-virtual-key overrides"
+							description="Keyed by the governance-resolved virtual key name. Requests without a matching key fall back to the defaults above."
+							inputPlaceholder="vk-opencode"
+							overrides={values.virtualKeys}
+							disabled={!hasUpdateAccess || isSaving}
+							onChange={(virtualKeys) => updateValues({ virtualKeys })}
+						/>
+
 						{validationError && (
 							<div className="border-destructive/40 bg-destructive/10 text-destructive rounded-sm border p-3 text-sm">
 								{validationError}
@@ -205,6 +224,72 @@ export default function TokenSaverView() {
 					</div>
 				</div>
 			)}
+		</div>
+	);
+}
+
+function OverrideSection({
+	title,
+	description,
+	inputPlaceholder,
+	overrides,
+	disabled,
+	onChange,
+}: {
+	title: string;
+	description: string;
+	inputPlaceholder: string;
+	overrides: TokenSaverOverride[];
+	disabled: boolean;
+	onChange: (overrides: TokenSaverOverride[]) => void;
+}) {
+	const updateOverride = (index: number, updates: Partial<TokenSaverOverride>) => {
+		onChange(overrides.map((override, i) => (i === index ? { ...override, ...updates } : override)));
+	};
+	return (
+		<div className="space-y-3">
+			<div>
+				<Label>{title}</Label>
+				<p className="text-muted-foreground text-sm">{description}</p>
+			</div>
+			{overrides.map((override, index) => (
+				<div key={index} className="flex items-center gap-3 rounded-md border p-3">
+					<Input
+						data-testid={`token-saver-override-key-${index}`}
+						placeholder={inputPlaceholder}
+						value={override.key}
+						disabled={disabled}
+						className="flex-1 font-mono"
+						onChange={(event) => updateOverride(index, { key: event.target.value })}
+					/>
+					<div className="flex shrink-0 items-center gap-2">
+						<Switch
+							data-testid={`token-saver-override-rtk-${index}`}
+							checked={override.rtk}
+							disabled={disabled}
+							onCheckedChange={(rtk) => updateOverride(index, { rtk })}
+						/>
+						<Button
+							variant="ghost"
+							size="sm"
+							data-testid={`token-saver-override-delete-${index}`}
+							disabled={disabled}
+							onClick={() => onChange(overrides.filter((_, i) => i !== index))}
+						>
+							Remove
+						</Button>
+					</div>
+				</div>
+			))}
+			<Button
+				variant="outline"
+				size="sm"
+				data-testid={`token-saver-override-add-${title.includes("model") ? "model" : "virtual-key"}`}
+				disabled={disabled}
+				onClick={() => onChange([...overrides, { key: "", rtk: true }])}
+			>
+				Add override
+			</Button>
 		</div>
 	);
 }
