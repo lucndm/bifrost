@@ -399,6 +399,7 @@ func clearCtxForFallback(ctx *schemas.BifrostContext) {
 	ctx.ClearValue(schemas.BifrostContextKeyAPIKeyName)
 	ctx.ClearValue(schemas.BifrostContextKeyDirectKey)
 	ctx.ClearValue(schemas.BifrostContextKeyRoutingPinnedAPIKeyID)
+	ctx.ClearValue(schemas.BifrostContextKeyAdaptivePinnedAPIKeyName)
 	ctx.ClearValue(schemas.BifrostContextKeyGovernanceIncludeOnlyKeys)
 	ctx.ClearValue(schemas.BifrostContextKeyChangeRequestType)
 	ctx.ClearValue(schemas.BifrostContextKeyAttemptTrail)
@@ -461,6 +462,7 @@ func ClearContextForInternalRequest(ctx *schemas.BifrostContext) {
 	// Key routing.
 	ctx.ClearValue(schemas.BifrostContextKeyGovernanceIncludeOnlyKeys)
 	ctx.ClearValue(schemas.BifrostContextKeyRoutingPinnedAPIKeyID)
+	ctx.ClearValue(schemas.BifrostContextKeyAdaptivePinnedAPIKeyName)
 	ctx.ClearValue(schemas.BifrostContextKeyAPIKeyID)
 	ctx.ClearValue(schemas.BifrostContextKeyAPIKeyName)
 	ctx.ClearValue(schemas.BifrostContextKeyDirectKey)
