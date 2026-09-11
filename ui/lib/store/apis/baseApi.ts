@@ -174,6 +174,8 @@ export const baseApi = createApi({
 		"APIKeys",
 		"OAuth2Config",
 		"RoutingRules",
+		"AdaptiveConfig",
+		"AdaptiveMetrics",
 		"PricingOverrides",
 		"MCPToolGroups",
 		"VirtualMCPs",
