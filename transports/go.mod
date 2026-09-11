@@ -28,6 +28,7 @@ require (
 	github.com/maximhq/bifrost/plugins/routing v1.0.2
 	github.com/maximhq/bifrost/plugins/semanticcache v1.6.2
 	github.com/maximhq/bifrost/plugins/telemetry v1.6.2
+	github.com/maximhq/bifrost/plugins/tokensaver v0.1.0
 	github.com/pion/rtcp v1.2.16
 	github.com/pion/webrtc/v4 v4.2.9
 	github.com/prometheus/client_golang v1.23.2

@@ -51,6 +51,7 @@ import (
 	"github.com/maximhq/bifrost/plugins/routing/rules"
 	"github.com/maximhq/bifrost/plugins/semanticcache"
 	"github.com/maximhq/bifrost/plugins/telemetry"
+	"github.com/maximhq/bifrost/plugins/tokensaver"
 	"gorm.io/gorm"
 )
 
@@ -133,6 +134,7 @@ var builtinPluginNames = []string{
 	compat.PluginName,
 	maxim.PluginName,
 	routing.PluginName,
+	tokensaver.PluginName,
 }
 
 func GetBuiltinPluginNames() []string {

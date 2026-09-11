@@ -17,6 +17,7 @@ import (
 	"github.com/maximhq/bifrost/plugins/routing"
 	"github.com/maximhq/bifrost/plugins/semanticcache"
 	"github.com/maximhq/bifrost/plugins/telemetry"
+	"github.com/maximhq/bifrost/plugins/tokensaver"
 	"github.com/maximhq/bifrost/transports/bifrost-http/handlers"
 	"github.com/maximhq/bifrost/transports/bifrost-http/lib"
 )
@@ -135,6 +136,13 @@ func loadBuiltinPlugin(ctx context.Context, name string, pluginConfig any, bifro
 			return nil, fmt.Errorf("failed to marshal semantic cache plugin config: %w", err)
 		}
 		return semanticcache.Init(ctx, semanticConfig, logger, bifrostConfig.VectorStore)
+
+	case tokensaver.PluginName:
+		tokenSaverConfig, err := MarshalPluginConfig[tokensaver.Config](pluginConfig)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal token-saver plugin config: %w", err)
+		}
+		return tokensaver.Init(tokenSaverConfig, logger)
 
 	case otel.PluginName:
 		otelConfig, err := MarshalPluginConfig[otel.Config](pluginConfig)
