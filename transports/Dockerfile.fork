@@ -31,7 +31,7 @@ COPY framework/go.mod framework/go.sum ./framework/
 COPY plugins/tokensaver/go.mod plugins/tokensaver/go.sum ./plugins/tokensaver/
 COPY transports/go.mod transports/go.sum ./transports/
 
-RUN printf 'go 1.27.0\n\nuse (\n\t./core\n\t./framework\n\t./plugins/tokensaver\n\t./transports\n)\n' > go.work
+RUN printf 'go 1.27.0\n\nuse (\n\t./core\n\t./framework\n\t./plugins/tokensaver\n\t./transports\n)\n\nreplace github.com/maximhq/bifrost/plugins/tokensaver v0.1.0 => ./plugins/tokensaver\n' > go.work
 
 RUN cd core && go mod download && \
   cd ../framework && go mod download && \
