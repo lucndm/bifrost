@@ -108,7 +108,9 @@ func (p *Plugin) Cleanup() error {
 // PreRequestHook runs the token-saver once per top-level request. Mutations
 // here are committed before fan-out, so every attempt sees the same compressed
 // body. Fail-open: any internal error is logged and the request passes through
-// untouched.
+// untouched. When tracing is active (a Tracer is on ctx) the hook emits an
+// `rtk.token_saver` span carrying the per-request RTK outcome for the homelab
+// lake pipeline (ADR-0082); tracing failures are swallowed like everything else.
 func (p *Plugin) PreRequestHook(ctx *schemas.BifrostContext, req *schemas.BifrostRequest) error {
 	defer func() {
 		if r := recover(); r != nil {
@@ -120,16 +122,55 @@ func (p *Plugin) PreRequestHook(ctx *schemas.BifrostContext, req *schemas.Bifros
 	}
 	_, model, _ := req.GetRequestFields()
 	virtualKey, _ := ctx.Value(schemas.BifrostContextKeyGovernanceVirtualKeyName).(string)
-	if !p.resolveSettings(model, virtualKey).RTK {
+	resolved := p.resolveSettings(model, virtualKey)
+	if !resolved.RTK {
 		return nil
 	}
-	stats := p.compressRequest(req)
+
+	tracer, _ := ctx.Value(schemas.BifrostContextKeyTracer).(schemas.Tracer)
+	var handle schemas.SpanHandle
+	var span *schemas.Span
+	if tracer != nil {
+		_, handle = tracer.StartSpan(ctx, SpanNameTokenSaver, schemas.SpanKindInternal)
+		span = tracer.SpanFromHandle(handle)
+	}
+
+	stats, failOpen := p.runCompression(req)
+	if span != nil {
+		setTokenSaverSpanAttributes(span, req, stats, resolved, failOpen)
+	}
+	if tracer != nil && handle != nil {
+		if failOpen {
+			tracer.EndSpan(handle, schemas.SpanStatusError, "token-saver compression recovered from internal error")
+		} else {
+			tracer.EndSpan(handle, schemas.SpanStatusOk, "")
+		}
+	}
+
 	if p.logStats && stats.savedBytes > 0 {
 		p.logger.Info("[token-saver] rtk saved %s / %s bytes (%.1f%%) via %s hits=%d",
 			formatBytes(stats.savedBytes), formatBytes(stats.totalBytes),
 			percent(stats.savedBytes, stats.totalBytes), stats.filterNames(), stats.hits)
 	}
 	return nil
+}
+
+// runCompression wraps compressRequest with the hook-level fail-open boundary.
+// The bool reports whether the request was left mid-compression (recovered
+// per-message errors were counted but the body is still dispatched).
+func (p *Plugin) runCompression(req *schemas.BifrostRequest) (compressStats, bool) {
+	var stats compressStats
+	var failOpen bool
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				failOpen = true
+				p.logger.Warn("token-saver: recovered from panic while compressing request: %v", r)
+			}
+		}()
+		stats = p.compressRequest(req)
+	}()
+	return stats, failOpen
 }
 
 // PreLLMHook is a no-op: compression already happened in PreRequestHook.

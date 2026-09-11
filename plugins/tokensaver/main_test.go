@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/maximhq/bifrost/core/schemas"
+	"github.com/maximhq/bifrost/framework/tracing"
 )
 
 // mockLogger captures warnings for fail-open assertions.
@@ -401,5 +402,81 @@ func TestInvalidModelGlobFailsOpen(t *testing.T) {
 func TestInitRequiresLogger(t *testing.T) {
 	if _, err := Init(nil, nil); err != ErrNilLogger {
 		t.Fatalf("expected ErrNilLogger, got %v", err)
+	}
+}
+
+// --- span emission ---
+
+func newTestTracer(t *testing.T) (*tracing.Tracer, *tracing.TraceStore) {
+	t.Helper()
+	store := tracing.NewTraceStore(5*time.Minute, nil)
+	return tracing.NewTracer(store, nil, nil), store
+}
+
+func TestPreRequestHookEmitsTokenSaverSpan(t *testing.T) {
+	p, err := Init(&Config{Default: &Settings{RTK: boolPtr(true)}}, &mockLogger{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	big := makeUniqueLines(400, "line ")
+	req := &schemas.BifrostRequest{ChatRequest: &schemas.BifrostChatRequest{
+		Model: "gpt-5",
+		Input: []schemas.ChatMessage{toolMsg(big, false)},
+	}}
+	ctx := schemas.NewBifrostContext(t.Context(), time.Time{})
+	tracer, _ := newTestTracer(t)
+	ctx.SetValue(schemas.BifrostContextKeyTracer, tracer)
+	traceID := tracer.CreateTrace("")
+	ctx.SetValue(schemas.BifrostContextKeyTraceID, traceID)
+	if err := p.PreRequestHook(ctx, req); err != nil {
+		t.Fatal(err)
+	}
+	trace := tracer.EndTrace(traceID)
+	if trace == nil {
+		t.Fatal("trace must exist after EndTrace")
+	}
+	var span *schemas.Span
+	for _, s := range trace.Spans {
+		if s.Name == "rtk.token_saver" {
+			span = s
+			break
+		}
+	}
+	if span == nil {
+		t.Fatalf("rtk.token_saver span not found in trace with %d spans", len(trace.Spans))
+	}
+	if span.Status != schemas.SpanStatusOk {
+		t.Fatalf("span status = %q, want ok", span.Status)
+	}
+	attrs := span.Attributes
+	if attrs["rtk.shape"] != "openai_chat" {
+		t.Fatalf("rtk.shape = %v", attrs["rtk.shape"])
+	}
+	if attrs["rtk.filter.hits"] != int64(1) {
+		t.Fatalf("rtk.filter.hits = %v (%T)", attrs["rtk.filter.hits"], attrs["rtk.filter.hits"])
+	}
+	if attrs["rtk.request.bytes.saved"].(int64) <= 0 {
+		t.Fatal("rtk.request.bytes.saved must be positive for a compressed request")
+	}
+	features, ok := attrs["rtk.features.applied"].([]string)
+	if !ok || len(features) != 1 || features[0] != "rtk" {
+		t.Fatalf("rtk.features.applied = %v (%T)", attrs["rtk.features.applied"], attrs["rtk.features.applied"])
+	}
+	if attrs["rtk.optout"] != false {
+		t.Fatalf("rtk.optout = %v", attrs["rtk.optout"])
+	}
+	if attrs["rtk.failopen"] != false {
+		t.Fatalf("rtk.failopen = %v", attrs["rtk.failopen"])
+	}
+}
+
+func TestPreRequestHookNoTracerIsFine(t *testing.T) {
+	p := newTestPlugin(t)
+	big := makeUniqueLines(400, "line ")
+	req := &schemas.BifrostRequest{ChatRequest: &schemas.BifrostChatRequest{
+		Input: []schemas.ChatMessage{toolMsg(big, false)},
+	}}
+	if err := p.PreRequestHook(nil, req); err != nil {
+		t.Fatalf("nil ctx / nil tracer must not error: %v", err)
 	}
 }

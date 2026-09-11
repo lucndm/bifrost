@@ -17,6 +17,7 @@ require (
 	github.com/klauspost/cpuid/v2 v2.3.0 // indirect
 	github.com/mailru/easyjson v0.9.1 // indirect
 	github.com/mark3labs/mcp-go v0.43.2 // indirect
+	github.com/maximhq/bifrost/framework v1.6.2
 	github.com/molecule-man/go-brrr v1.0.1 // indirect
 	github.com/spf13/cast v1.10.0 // indirect
 	github.com/tidwall/gjson v1.18.0 // indirect

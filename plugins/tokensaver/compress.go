@@ -6,11 +6,13 @@ import (
 	"github.com/maximhq/bifrost/core/schemas"
 )
 
-// compressStats aggregates per-request RTK results for the stats log line.
+// compressStats aggregates per-request RTK results for the stats log line
+// and the rtk.token_saver span.
 type compressStats struct {
 	savedBytes int64
 	totalBytes int64
 	hits       int
+	errors     int
 	filters    map[string]int
 }
 
@@ -63,6 +65,7 @@ func (p *Plugin) compressChat(req *schemas.BifrostChatRequest, stats *compressSt
 			defer func() {
 				if r := recover(); r != nil {
 					p.logger.Warn("token-saver: recovered while compressing chat message %d: %v", i, r)
+					stats.errors++
 				}
 			}()
 			if msg.Role != schemas.ChatMessageRoleTool || msg.ChatToolMessage == nil {
@@ -100,6 +103,7 @@ func (p *Plugin) compressResponses(req *schemas.BifrostResponsesRequest, stats *
 			defer func() {
 				if r := recover(); r != nil {
 					p.logger.Warn("token-saver: recovered while compressing responses input %d: %v", i, r)
+					stats.errors++
 				}
 			}()
 			if item.Type == nil || *item.Type != schemas.ResponsesMessageTypeFunctionCallOutput {
