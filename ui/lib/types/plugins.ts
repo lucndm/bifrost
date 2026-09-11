@@ -2,6 +2,27 @@
 
 export const SEMANTIC_CACHE_PLUGIN = "semantic_cache";
 export const MAXIM_PLUGIN = "maxim";
+export const TOKEN_SAVER_PLUGIN = "token-saver";
+
+export const TOKEN_SAVER_FILTERS = ["git-diff", "dedup-log", "smart-truncate"] as const;
+
+export type TokenSaverFilter = (typeof TOKEN_SAVER_FILTERS)[number];
+
+export interface TokenSaverSettings {
+	rtk?: boolean;
+}
+
+export interface TokenSaverConfig {
+	default?: TokenSaverSettings;
+	virtual_keys?: Record<string, TokenSaverSettings>;
+	models?: Record<string, TokenSaverSettings>;
+	rtk_filters?: {
+		min_bytes?: number;
+		max_bytes?: number;
+		enabled?: TokenSaverFilter[];
+	};
+	log_stats?: boolean;
+}
 
 export type PluginType = "llm" | "mcp" | "http";
 
