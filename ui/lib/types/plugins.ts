@@ -31,7 +31,7 @@ export interface PluginsResponse {
 
 export interface CreatePluginRequest {
 	name: string;
-	path: string;
+	path?: string;
 	enabled: boolean;
 	config: any;
 	placement?: string;
