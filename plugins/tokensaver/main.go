@@ -21,12 +21,9 @@ const (
 
 // Settings controls which token-saver mechanisms apply to a request.
 type Settings struct {
-	// RTK enables passive compression of tool_result content.
-	RTK bool `json:"rtk"`
-	// Caveman level (off|lite|full|ultra) — phase 2.
-	Caveman string `json:"caveman,omitempty"`
-	// Ponytail level (off|lite|full|ultra) — phase 2.
-	Ponytail string `json:"ponytail,omitempty"`
+	RTK      *bool   `json:"rtk,omitempty"`
+	Caveman  *string `json:"caveman,omitempty"`
+	Ponytail *string `json:"ponytail,omitempty"`
 }
 
 // RTKFilterSettings bounds which compression filters run.
@@ -42,17 +39,21 @@ type RTKFilterSettings struct {
 
 // Config is the plugin's config.json plugins[].config shape.
 type Config struct {
-	Default    *Settings          `json:"default,omitempty"`
-	RTKFilters *RTKFilterSettings `json:"rtk_filters,omitempty"`
-	LogStats   *bool              `json:"log_stats,omitempty"`
+	Default     *Settings           `json:"default,omitempty"`
+	VirtualKeys map[string]Settings `json:"virtual_keys,omitempty"`
+	Models      map[string]Settings `json:"models,omitempty"`
+	RTKFilters  *RTKFilterSettings  `json:"rtk_filters,omitempty"`
+	LogStats    *bool               `json:"log_stats,omitempty"`
 }
 
 // Plugin implements schemas.LLMPlugin.
 type Plugin struct {
-	settings Settings
-	filters  filterSet
-	logStats bool
-	logger   schemas.Logger
+	defaultSettings resolvedSettings
+	virtualKeys     map[string]Settings
+	models          map[string]Settings
+	filters         filterSet
+	logStats        bool
+	logger          schemas.Logger
 }
 
 // Init creates a token-saver plugin instance.
@@ -60,10 +61,18 @@ func Init(config *Config, logger schemas.Logger) (*Plugin, error) {
 	if logger == nil {
 		return nil, ErrNilLogger
 	}
-	settings := Settings{RTK: true}
+	defaultSettings := resolvedSettings{RTK: true, Caveman: "off", Ponytail: "off"}
+	virtualKeys := map[string]Settings{}
+	models := map[string]Settings{}
 	if config != nil {
 		if config.Default != nil {
-			settings = *config.Default
+			defaultSettings = mergeSettings(defaultSettings, *config.Default)
+		}
+		if config.VirtualKeys != nil {
+			virtualKeys = config.VirtualKeys
+		}
+		if config.Models != nil {
+			models = config.Models
 		}
 	}
 	var fs filterSet
@@ -77,10 +86,12 @@ func Init(config *Config, logger schemas.Logger) (*Plugin, error) {
 		logStats = *config.LogStats
 	}
 	return &Plugin{
-		settings: settings,
-		filters:  fs,
-		logStats: logStats,
-		logger:   logger,
+		defaultSettings: defaultSettings,
+		virtualKeys:     virtualKeys,
+		models:          models,
+		filters:         fs,
+		logStats:        logStats,
+		logger:          logger,
 	}, nil
 }
 
@@ -104,7 +115,12 @@ func (p *Plugin) PreRequestHook(ctx *schemas.BifrostContext, req *schemas.Bifros
 			p.logger.Warn("token-saver: recovered from panic in PreRequestHook: %v", r)
 		}
 	}()
-	if req == nil || !p.settings.RTK {
+	if req == nil {
+		return nil
+	}
+	_, model, _ := req.GetRequestFields()
+	virtualKey, _ := ctx.Value(schemas.BifrostContextKeyGovernanceVirtualKeyName).(string)
+	if !p.resolveSettings(model, virtualKey).RTK {
 		return nil
 	}
 	stats := p.compressRequest(req)

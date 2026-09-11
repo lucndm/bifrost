@@ -4,6 +4,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/maximhq/bifrost/core/schemas"
 )
@@ -307,7 +308,7 @@ func TestPreRequestHookFailOpen(t *testing.T) {
 		t.Fatalf("nil request must not error: %v", err)
 	}
 	// RTK off: untouched.
-	pOff, _ := Init(&Config{Default: &Settings{RTK: false}}, &mockLogger{})
+	pOff, _ := Init(&Config{Default: &Settings{RTK: boolPtr(false)}}, &mockLogger{})
 	big := makeLines(400, "x ")
 	req := &schemas.BifrostRequest{ChatRequest: &schemas.BifrostChatRequest{
 		Input: []schemas.ChatMessage{toolMsg(big, false)},
@@ -317,6 +318,83 @@ func TestPreRequestHookFailOpen(t *testing.T) {
 	}
 	if *req.ChatRequest.Input[0].Content.ContentStr != big {
 		t.Fatal("rtk=off must not compress")
+	}
+}
+
+func TestResolveSettingsPrecedence(t *testing.T) {
+	p, err := Init(&Config{
+		Default: &Settings{RTK: boolPtr(true)},
+		VirtualKeys: map[string]Settings{
+			"vk-opencode": {RTK: boolPtr(false)},
+		},
+		Models: map[string]Settings{
+			"claude-*":        {RTK: boolPtr(false)},
+			"claude-sonnet-*": {RTK: boolPtr(true)},
+		},
+	}, &mockLogger{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name       string
+		model      string
+		virtualKey string
+		wantRTK    bool
+	}{
+		{name: "default", model: "gpt-5", wantRTK: true},
+		{name: "virtual key", model: "gpt-5", virtualKey: "vk-opencode", wantRTK: false},
+		{name: "model beats virtual key", model: "claude-sonnet-4", virtualKey: "vk-opencode", wantRTK: true},
+		{name: "longest model pattern", model: "claude-sonnet-4", wantRTK: true},
+		{name: "broader model pattern", model: "claude-haiku-4", wantRTK: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := p.resolveSettings(tt.model, tt.virtualKey).RTK; got != tt.wantRTK {
+				t.Fatalf("RTK = %v, want %v", got, tt.wantRTK)
+			}
+		})
+	}
+}
+
+func TestPreRequestHookUsesResolvedVirtualKeyAndRoutedModel(t *testing.T) {
+	p, err := Init(&Config{
+		Default: &Settings{RTK: boolPtr(false)},
+		VirtualKeys: map[string]Settings{
+			"vk-opencode": {RTK: boolPtr(true)},
+		},
+		Models: map[string]Settings{
+			"routed-*": {RTK: boolPtr(false)},
+		},
+	}, &mockLogger{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	big := makeUniqueLines(400, "line ")
+	req := &schemas.BifrostRequest{ChatRequest: &schemas.BifrostChatRequest{
+		Model: "routed-model",
+		Input: []schemas.ChatMessage{toolMsg(big, false)},
+	}}
+	ctx := schemas.NewBifrostContext(t.Context(), time.Time{})
+	ctx.SetValue(schemas.BifrostContextKeyGovernanceVirtualKeyName, "vk-opencode")
+	if err := p.PreRequestHook(ctx, req); err != nil {
+		t.Fatal(err)
+	}
+	if got := *req.ChatRequest.Input[0].Content.ContentStr; got != big {
+		t.Fatal("model override must take precedence over virtual key override")
+	}
+}
+
+func TestInvalidModelGlobFailsOpen(t *testing.T) {
+	p, err := Init(&Config{
+		Default: &Settings{RTK: boolPtr(true)},
+		Models:  map[string]Settings{"[": {RTK: boolPtr(false)}},
+	}, &mockLogger{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !p.resolveSettings("gpt-5", "").RTK {
+		t.Fatal("invalid glob must not override defaults")
 	}
 }
 

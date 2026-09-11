@@ -271,25 +271,36 @@ func (s *BifrostHTTPServer) loadBuiltinPlugins(ctx context.Context) error {
 	}
 	s.Config.SetPluginOrderInfo(routing.PluginName, builtinPlacement, schemas.Ptr(5))
 
-	// 6. OTEL (if configured in PluginConfigs)
+	// 6. Token Saver (if configured in PluginConfigs). Must run AFTER governance and
+	// routing so PreRequestHook sees the resolved virtual-key name and the post-routing
+	// model when resolving per-model/per-VK settings overrides.
+	tokenSaverConfig := s.getPluginConfig(tokensaver.PluginName)
+	if tokenSaverConfig != nil && tokenSaverConfig.Enabled {
+		s.registerPluginWithStatus(ctx, tokensaver.PluginName, nil, tokenSaverConfig.Config, false)
+	} else {
+		s.markPluginDisabled(tokensaver.PluginName)
+	}
+	s.Config.SetPluginOrderInfo(tokensaver.PluginName, builtinPlacement, schemas.Ptr(6))
+
+	// 7. OTEL (if configured in PluginConfigs)
 	otelConfig := s.getPluginConfig(otel.PluginName)
 	if otelConfig != nil && otelConfig.Enabled {
 		s.registerPluginWithStatus(ctx, otel.PluginName, nil, otelConfig.Config, false)
 	} else {
 		s.markPluginDisabled(otel.PluginName)
 	}
-	s.Config.SetPluginOrderInfo(otel.PluginName, builtinPlacement, schemas.Ptr(6))
+	s.Config.SetPluginOrderInfo(otel.PluginName, builtinPlacement, schemas.Ptr(7))
 
-	// 7. Semantic Cache (if configured in PluginConfigs)
+	// 8. Semantic Cache (if configured in PluginConfigs)
 	semanticCacheConfig := s.getPluginConfig(semanticcache.PluginName)
 	if semanticCacheConfig != nil && semanticCacheConfig.Enabled {
 		s.registerPluginWithStatus(ctx, semanticcache.PluginName, nil, semanticCacheConfig.Config, false)
 	} else {
 		s.markPluginDisabled(semanticcache.PluginName)
 	}
-	s.Config.SetPluginOrderInfo(semanticcache.PluginName, builtinPlacement, schemas.Ptr(7))
+	s.Config.SetPluginOrderInfo(semanticcache.PluginName, builtinPlacement, schemas.Ptr(8))
 
-	// 8. Compat (if any compat feature is enabled in ClientConfig)
+	// 9. Compat (if any compat feature is enabled in ClientConfig)
 	cc := s.Config.ClientConfig.Compat
 	compatCfg := &compat.Config{
 		ConvertTextToChat:      cc.ConvertTextToChat,
@@ -299,16 +310,16 @@ func (s *BifrostHTTPServer) loadBuiltinPlugins(ctx context.Context) error {
 		AzureDeepseek:          cc.AzureDeepseek,
 	}
 	s.registerPluginWithStatus(ctx, compat.PluginName, nil, compatCfg, false)
-	s.Config.SetPluginOrderInfo(compat.PluginName, builtinPlacement, schemas.Ptr(8))
+	s.Config.SetPluginOrderInfo(compat.PluginName, builtinPlacement, schemas.Ptr(9))
 
-	// 9. Maxim (if configured in PluginConfigs)
+	// 10. Maxim (if configured in PluginConfigs)
 	maximConfig := s.getPluginConfig(maxim.PluginName)
 	if maximConfig != nil && maximConfig.Enabled {
 		s.registerPluginWithStatus(ctx, maxim.PluginName, nil, maximConfig.Config, false)
 	} else {
 		s.markPluginDisabled(maxim.PluginName)
 	}
-	s.Config.SetPluginOrderInfo(maxim.PluginName, builtinPlacement, schemas.Ptr(9))
+	s.Config.SetPluginOrderInfo(maxim.PluginName, builtinPlacement, schemas.Ptr(10))
 
 	// 10. ModelCatalogResolver (last routing layer — fills req.Provider from catalog only when
 	// no earlier routing plugin (governance routing rules, governance VK LB, enterprise LB)
