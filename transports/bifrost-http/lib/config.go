@@ -4535,6 +4535,15 @@ func loadAuthConfig(ctx context.Context, config *Config, configData *ConfigData)
 		logger.Warn("password set with external reference but value is empty: %s", authConfig.AdminPassword.GetRawRef())
 	}
 	if authConfig.AdminPassword == nil || authConfig.AdminUserName == nil {
+		if authConfig.SSO != nil && authConfig.SSO.Enabled {
+			// SSO-only deployments carry no local admin credentials; persist the
+			// SSO config so the dashboard auth type resolves to "sso".
+			config.GovernanceConfig.AuthConfig = authConfig
+			if err := config.ConfigStore.UpdateAuthConfig(ctx, authConfig); err != nil {
+				logger.Warn("failed to update auth config: %v", err)
+			}
+			return
+		}
 		logger.Warn("auth config is missing admin_username or admin_password, skipping auth config processing")
 		return
 	}
