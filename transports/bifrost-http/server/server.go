@@ -31,6 +31,7 @@ import (
 	"github.com/maximhq/bifrost/framework/temptoken"
 	"github.com/maximhq/bifrost/framework/tracing"
 	"github.com/maximhq/bifrost/framework/webhooks"
+	"github.com/maximhq/bifrost/plugins/adaptive"
 	"github.com/maximhq/bifrost/plugins/governance"
 	"github.com/maximhq/bifrost/plugins/logging"
 	"github.com/maximhq/bifrost/plugins/otel"
@@ -2411,6 +2412,18 @@ func (s *BifrostHTTPServer) RegisterAPIRoutes(ctx context.Context, callbacks Ser
 		}
 		return p
 	})
+	// Adaptive load balancer endpoints resolve the plugin per request for the
+	// same reason the cache handler does: /api/plugins reloads swap instances.
+	adaptiveHandler, err := handlers.NewAdaptiveHandler(func() *adaptive.AdaptivePlugin {
+		p, err := lib.FindPluginAs[*adaptive.AdaptivePlugin](s.Config, adaptive.PluginName)
+		if err != nil || p == nil {
+			return nil
+		}
+		return p
+	}, s.Config.ConfigStore)
+	if err != nil {
+		return fmt.Errorf("failed to initialize adaptive handler: %v", err)
+	}
 	// Websocket handler needs to go below UI handler
 	logger.Debug("initializing websocket server")
 	if s.WebSocketHandler == nil {
@@ -2497,6 +2510,7 @@ func (s *BifrostHTTPServer) RegisterAPIRoutes(ctx context.Context, callbacks Ser
 	if routingHandler != nil {
 		routingHandler.RegisterRoutes(s.Router, middlewares...)
 	}
+	adaptiveHandler.RegisterRoutes(s.Router, middlewares...)
 	if loggingHandler != nil {
 		loggingHandler.RegisterRoutes(s.Router, middlewares...)
 	}
