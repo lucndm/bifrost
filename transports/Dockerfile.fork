@@ -36,7 +36,8 @@ RUN printf 'go 1.27.0\n\nuse (\n\t./core\n\t./framework\n\t./plugins/tokensaver\
 RUN cd core && go mod download && \
   cd ../framework && go mod download && \
   cd ../plugins/tokensaver && go mod download && \
-  cd ../../transports && go mod download && \
+  cd ../../transports && go mod edit -replace=github.com/maximhq/bifrost/plugins/tokensaver@v0.1.0=../plugins/tokensaver && \
+  go mod download && \
   go work sync
 
 # Copy full sources and build through the workspace
