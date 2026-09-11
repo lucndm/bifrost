@@ -10,7 +10,7 @@
     is_error outputs or provider-native raw payloads.
   - Stats log line per request when savings > 0.
 
-## Unreleased
+## 0.2.0 (2026-09-11)
 
 - Settings overrides: `models.<glob>` (longest pattern wins, `path.Match`) and
   `virtual_keys.<name>` merged field-wise over `default` (precedence: model → VK → default).
