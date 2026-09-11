@@ -65,12 +65,23 @@ func (p *Plugin) PreLLMHook(ctx *schemas.BifrostContext, req *schemas.BifrostReq
 		applyReplacements(texts, outcome.replacements)
 		recordRedactions(ctx, schemas.RedactionPhaseInput, outcome.replacements)
 	}
+
+	if req.RequestType == schemas.ChatCompletionStreamRequest {
+		if sc := p.pauseForOutputGuarding(ctx); sc != nil {
+			return req, sc, nil
+		}
+	}
 	return req, nil, nil
 }
 
 func (p *Plugin) PostLLMHook(ctx *schemas.BifrostContext, resp *schemas.BifrostResponse, bifrostErr *schemas.BifrostError) (*schemas.BifrostResponse, *schemas.BifrostError, error) {
 	if !p.active() || bifrostErr != nil || resp == nil || resp.ChatResponse == nil {
 		return resp, bifrostErr, nil
+	}
+
+	if isChatStreamResponse(resp) {
+		out, outErr := p.evaluateStreamChunk(ctx, resp)
+		return out, outErr, nil
 	}
 
 	texts := extractResponseTexts(resp)
