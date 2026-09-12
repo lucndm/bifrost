@@ -28,18 +28,24 @@ ENV CGO_ENABLED=1 GOOS=linux
 # go.work is gitignored in this repo, so it is generated here instead of copied.
 COPY core/go.mod core/go.sum ./core/
 COPY framework/go.mod framework/go.sum ./framework/
+COPY plugins/guardrails/go.mod plugins/guardrails/go.sum ./plugins/guardrails/
+COPY plugins/tokensaver/go.mod plugins/tokensaver/go.sum ./plugins/tokensaver/
 COPY transports/go.mod transports/go.sum ./transports/
 
-RUN printf 'go 1.27.0\n\nuse (\n\t./core\n\t./framework\n\t./transports\n)\n' > go.work
+RUN printf 'go 1.27.0\n\nuse (\n\t./core\n\t./framework\n\t./plugins/guardrails\n\t./plugins/tokensaver\n\t./transports\n)\n\nreplace github.com/maximhq/bifrost/plugins/guardrails v0.1.0 => ./plugins/guardrails\nreplace github.com/maximhq/bifrost/plugins/tokensaver v0.1.0 => ./plugins/tokensaver\n' > go.work
 
 RUN cd core && go mod download && \
   cd ../framework && go mod download && \
-  cd ../transports && go mod download && \
+  cd ../plugins/tokensaver && go mod download && \
+  cd ../../transports && go mod edit -replace=github.com/maximhq/bifrost/plugins/tokensaver@v0.1.0=../plugins/tokensaver && \
+  go mod download && \
   go work sync
 
 # Copy full sources and build through the workspace
 COPY core/ ./core/
 COPY framework/ ./framework/
+COPY plugins/guardrails/ ./plugins/guardrails/
+COPY plugins/tokensaver/ ./plugins/tokensaver/
 COPY transports/ ./transports/
 
 COPY --from=ui-builder /app/out ./transports/bifrost-http/ui

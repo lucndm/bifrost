@@ -1535,3 +1535,37 @@ export type GlobalHeaderFilterConfigSchema = z.infer<typeof globalHeaderFilterCo
 export type GlobalHeaderFilterFormSchema = z.infer<typeof globalHeaderFilterFormSchema>;
 export type RoutingRuleSchema = z.infer<typeof routingRuleSchema>;
 export type BudgetOverrideFormSchema = z.infer<typeof budgetOverrideFormSchema>;
+export const guardrailRuleFormSchema = z
+	.object({
+		name: z.string().min(1, "Rule name is required").max(100),
+		enabled: z.boolean(),
+		applyTo: z.enum(["input", "output", "both"]),
+		action: z.enum(["block", "redact", "log"]),
+		detector: z.enum(["regex", "pii"]),
+		patternsText: z.string(),
+		caseSensitive: z.boolean(),
+		entities: z.array(z.string()),
+		replacement: z.string().max(100),
+	})
+	.superRefine((data, ctx) => {
+		if (data.detector === "regex") {
+			const patterns = data.patternsText
+				.split("\n")
+				.map((p) => p.trim())
+				.filter(Boolean);
+			if (patterns.length === 0) {
+				ctx.addIssue({ code: "custom", path: ["patternsText"], message: "At least one pattern is required" });
+				return;
+			}
+			for (const pattern of patterns) {
+				try {
+					new RegExp(pattern);
+				} catch {
+					ctx.addIssue({ code: "custom", path: ["patternsText"], message: `Invalid regular expression: ${pattern}` });
+					break;
+				}
+			}
+		}
+	});
+
+export type GuardrailRuleFormSchema = z.infer<typeof guardrailRuleFormSchema>;

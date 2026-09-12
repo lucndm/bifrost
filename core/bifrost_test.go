@@ -3149,6 +3149,39 @@ func TestRunPreRequestHooks_CommitsRoutingPinnedKey(t *testing.T) {
 	})
 }
 
+// tracerProbePlugin records whether the pipeline's tracer is reachable from the
+// ctx a PreRequestHook receives.
+type tracerProbePlugin struct {
+	sawTracer bool
+}
+
+func (f *tracerProbePlugin) GetName() string { return "probe" }
+func (f *tracerProbePlugin) Cleanup() error  { return nil }
+func (f *tracerProbePlugin) PreRequestHook(ctx *schemas.BifrostContext, req *schemas.BifrostRequest) error {
+	_, f.sawTracer = ctx.Value(schemas.BifrostContextKeyTracer).(schemas.Tracer)
+	return nil
+}
+func (f *tracerProbePlugin) PreLLMHook(ctx *schemas.BifrostContext, req *schemas.BifrostRequest) (*schemas.BifrostRequest, *schemas.LLMPluginShortCircuit, error) {
+	return req, nil, nil
+}
+func (f *tracerProbePlugin) PostLLMHook(ctx *schemas.BifrostContext, resp *schemas.BifrostResponse, bifrostErr *schemas.BifrostError) (*schemas.BifrostResponse, *schemas.BifrostError, error) {
+	return resp, bifrostErr, nil
+}
+
+// TestRunPreRequestHooks_StampsTracerOnContext verifies that PreRequestHook plugins see the
+// pipeline's tracer on ctx. The HTTP tracing middleware keeps the tracer on the fasthttp
+// request ctx only, so without the stamp the PreRequestHook phase has a traceID but no
+// tracer, and plugin-emitted spans silently never happen.
+func TestRunPreRequestHooks_StampsTracerOnContext(t *testing.T) {
+	probe := &tracerProbePlugin{}
+	p := newRoutingCommitPipeline(probe)
+	ctx := schemas.NewBifrostContext(context.Background(), time.Now())
+	p.RunPreRequestHooks(ctx, &schemas.BifrostRequest{})
+	if !probe.sawTracer {
+		t.Fatal("PreRequestHook must see the pipeline tracer on ctx")
+	}
+}
+
 // TestClearAnthropicPassthroughForNonNativeProvider verifies that Anthropic raw-body
 // passthrough flags are cleared only when an Anthropic-integration request resolves to a
 // provider/model pair that doesn't speak the Anthropic Messages API natively (e.g. Bedrock).

@@ -7969,6 +7969,16 @@ func (p *PluginPipeline) RunPreRequestHooks(ctx *schemas.BifrostContext, req *sc
 	if skipPluginPipeline, ok := ctx.Value(schemas.BifrostContextKeySkipPluginPipeline).(bool); ok && skipPluginPipeline {
 		return
 	}
+	// Stamp the pipeline's tracer onto ctx when absent so PreRequestHook plugins can
+	// open spans the same way PreLLMHook plugins can (tryRequest/tryStreamRequest stamp
+	// it before RunLLMPreHooks). The HTTP tracing middleware keeps the tracer on the
+	// fasthttp request ctx only, so without this the PreRequestHook phase has a traceID
+	// but no tracer to open spans with.
+	if p.tracer != nil {
+		if _, ok := ctx.Value(schemas.BifrostContextKeyTracer).(schemas.Tracer); !ok {
+			ctx.SetValue(schemas.BifrostContextKeyTracer, p.tracer)
+		}
+	}
 	ctx.BlockRestrictedWrites()
 	for _, plugin := range p.llmPlugins {
 		pluginName := plugin.GetName()
