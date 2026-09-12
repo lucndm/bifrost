@@ -2570,6 +2570,17 @@ func (m *MockConfigStore) DeletePromptSession(ctx context.Context, id uint) erro
 // createTempDir creates a temporary directory for test files
 func createTempDir(t *testing.T) string {
 	t.Helper()
+	// Make config tests hermetic: the auto-detect provider feature
+	// (autoDetectProviders) turns provider env vars (OPENAI_API_KEY, ...) into
+	// extra keys whenever they are set, which breaks exact-key-count
+	// assertions on hosts that export them (devcontainers, laptops).
+	for _, envVar := range []string{
+		"OPENAI_API_KEY", "OPENAI_KEY",
+		"ANTHROPIC_API_KEY", "ANTHROPIC_KEY",
+		"MISTRAL_API_KEY", "MISTRAL_KEY",
+	} {
+		t.Setenv(envVar, "")
+	}
 	dir, err := os.MkdirTemp("", "bifrost-test-*")
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
@@ -2995,6 +3006,9 @@ func verifyProviderInDB(t *testing.T, store configstore.ConfigStore, provider sc
 		t.Fatalf("provider %s not found in DB", provider)
 	}
 	if len(cfg.Keys) != expectedKeyCount {
+		for i, k := range cfg.Keys {
+			t.Logf("DEBUG key[%d]: name=%s value=%s models=%v", i, k.Name, k.Value, k.Models)
+		}
 		t.Errorf("expected %d keys for provider %s, got %d", expectedKeyCount, provider, len(cfg.Keys))
 	}
 }
