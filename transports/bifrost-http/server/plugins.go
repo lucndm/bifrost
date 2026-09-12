@@ -126,9 +126,16 @@ func loadBuiltinPlugin(ctx context.Context, name string, pluginConfig any, bifro
 		return routing.Init(ctx, routingConfig, logger, bifrostConfig.ConfigStore, governancePlugin)
 
 	case adaptive.PluginName:
-		adaptiveConfig, err := MarshalPluginConfig[adaptive.Config](pluginConfig)
-		if err != nil {
-			return nil, fmt.Errorf("failed to marshal adaptive plugin config: %w", err)
+		// Adaptive runs with defaults when no config block exists (registerPluginWithStatus
+		// passes nil for config-less builtins), so only marshal when there is something to
+		// marshal — MarshalPluginConfig rejects nil.
+		var adaptiveConfig *adaptive.Config
+		if pluginConfig != nil {
+			c, err := MarshalPluginConfig[adaptive.Config](pluginConfig)
+			if err != nil {
+				return nil, fmt.Errorf("failed to marshal adaptive plugin config: %w", err)
+			}
+			adaptiveConfig = c
 		}
 		plugin, err := adaptive.Init(ctx, adaptiveConfig, logger)
 		if err != nil {
