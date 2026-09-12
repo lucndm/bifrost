@@ -8020,6 +8020,20 @@ func (p *PluginPipeline) RunPreRequestHooks(ctx *schemas.BifrostContext, req *sc
 			ctx.SetValue(schemas.BifrostContextKeyAPIKeyID, pin)
 		}
 	}
+
+	// Commit the adaptive load balancer's key pin the same way. The adaptive plugin writes the
+	// key NAME it wants onto the non-reserved BifrostContextKeyAdaptivePinnedAPIKeyName during
+	// the blocked phase; core normalizes it into BifrostContextKeyAPIKeyName unless something
+	// more specific already decided the key — a caller-supplied pin, a routing-rule pin (which
+	// took BifrostContextKeyAPIKeyID above), or a direct caller write to BifrostContextKeyAPIKeyName.
+	// The adaptive pin is a soft server-side preference, so it loses to all of them.
+	if adaptivePin, ok := ctx.Value(schemas.BifrostContextKeyAdaptivePinnedAPIKeyName).(string); ok {
+		if adaptivePin = strings.TrimSpace(adaptivePin); adaptivePin != "" {
+			if existing, exists := ctx.Value(schemas.BifrostContextKeyAPIKeyName).(string); !exists || strings.TrimSpace(existing) == "" {
+				ctx.SetValue(schemas.BifrostContextKeyAPIKeyName, adaptivePin)
+			}
+		}
+	}
 }
 
 // RunPostLLMHooks executes PostHooks in reverse order for the plugins whose PreLLMHook ran.

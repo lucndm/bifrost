@@ -7,6 +7,7 @@ import (
 	"slices"
 
 	"github.com/maximhq/bifrost/core/schemas"
+	"github.com/maximhq/bifrost/plugins/adaptive"
 	"github.com/maximhq/bifrost/plugins/compat"
 	"github.com/maximhq/bifrost/plugins/governance"
 	"github.com/maximhq/bifrost/plugins/guardrails"
@@ -123,6 +124,28 @@ func loadBuiltinPlugin(ctx context.Context, name string, pluginConfig any, bifro
 			return nil, fmt.Errorf("routing plugin requires the governance plugin: %w", err)
 		}
 		return routing.Init(ctx, routingConfig, logger, bifrostConfig.ConfigStore, governancePlugin)
+
+	case adaptive.PluginName:
+		adaptiveConfig, err := MarshalPluginConfig[adaptive.Config](pluginConfig)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal adaptive plugin config: %w", err)
+		}
+		plugin, err := adaptive.Init(ctx, adaptiveConfig, logger)
+		if err != nil {
+			return nil, err
+		}
+		// Optional collaborators. Governance enables append_fallbacks_to_pinned
+		// (the allowlist of candidate providers); absence only turns that one
+		// switch into a no-op — reranking and key selection are self-contained.
+		// Model catalog lets appended fallbacks carry each provider's own model
+		// name; absence appends the incoming model string as-is.
+		if governancePlugin, gerr := lib.FindPluginAs[governance.BaseGovernancePlugin](bifrostConfig, governancePluginNameFromContext(ctx)); gerr == nil {
+			plugin.SetGovernance(governancePlugin)
+		}
+		if bifrostConfig.ModelCatalog != nil {
+			plugin.SetModelCatalog(bifrostConfig.ModelCatalog)
+		}
+		return plugin, nil
 
 	case maxim.PluginName:
 		maximConfig, err := MarshalPluginConfig[maxim.Config](pluginConfig)
@@ -291,6 +314,21 @@ func (s *BifrostHTTPServer) loadBuiltinPlugins(ctx context.Context) error {
 	s.Config.SetPluginOrderInfo(tokensaver.PluginName, builtinPlacement, schemas.Ptr(6))
 
 	// 7. OTEL (if configured in PluginConfigs)
+
+	// 6. Adaptive routing (OSS load balancer). Runs in the post_builtin group so its
+	// PreRequestHook lands after governance's weighted load balancing and the routing
+	// rules engine (both builtin), reranking the provider/fallback chain they decided,
+	// and before the model catalog resolver (post_builtin, MaxInt) so a reranked
+	// provider is not overwritten by a catalog fill. Disabled in enterprise, which
+	// ships its own load balancer.
+	if ctx.Value(schemas.BifrostContextKeyIsEnterprise) == nil {
+		s.registerPluginWithStatus(ctx, adaptive.PluginName, nil, nil, false)
+	} else {
+		s.markPluginDisabled(adaptive.PluginName)
+	}
+	s.Config.SetPluginOrderInfo(adaptive.PluginName, schemas.Ptr(schemas.PluginPlacementPostBuiltin), schemas.Ptr(1))
+
+	// 7. OTEL (if configured in PluginConfigs)
 	otelConfig := s.getPluginConfig(otel.PluginName)
 	if otelConfig != nil && otelConfig.Enabled {
 		s.registerPluginWithStatus(ctx, otel.PluginName, nil, otelConfig.Config, false)
@@ -340,7 +378,7 @@ func (s *BifrostHTTPServer) loadBuiltinPlugins(ctx context.Context) error {
 	}
 	s.Config.SetPluginOrderInfo(maxim.PluginName, builtinPlacement, schemas.Ptr(11))
 
-	// 11. ModelCatalogResolver (last routing layer — fills req.Provider from catalog only when
+	// 12. ModelCatalogResolver (last routing layer — fills req.Provider from catalog only when
 	// no earlier routing plugin (governance routing rules, governance VK LB, enterprise LB)
 	// already set one. CEL rules can still match on provider == "" because this runs last.
 	// Requires a model catalog; only register when one is configured.

@@ -56,12 +56,20 @@ test.describe('Placeholder and Enterprise Pages', () => {
   test('should load adaptive-routing page', async ({ page }) => {
     await page.goto('/workspace/adaptive-routing')
     await page.waitForLoadState('networkidle')
-    await expect(page.getByText('Unlock adaptive routing for better performance')).toBeVisible()
-    const readMore = page.getByRole('button', { name: /Read more/i })
-    await expect(readMore).toBeVisible()
-    const [popup] = await Promise.all([page.waitForEvent('popup'), readMore.click()])
-    await expect(popup).toHaveURL(/^https:\/\/docs\.getbifrost\.ai\/enterprise\/adaptive-load-balancing(\?|$)/)
-    await popup.close()
+    // OSS ships a real dashboard for the adaptive load balancer (the upsell
+    // page is enterprise-only now). A fresh gateway has served no traffic, so
+    // the snapshot renders its empty states.
+    await expect(page.getByTestId('adaptive-routing-dashboard')).toBeVisible()
+    await expect(page.getByText('Adaptive Routing')).toBeVisible()
+    await expect(page.getByTestId('adaptive-directions-empty')).toBeVisible()
+    await expect(page.getByTestId('adaptive-routes-empty')).toBeVisible()
+    const settingsLink = page.getByTestId('adaptive-routing-settings-link')
+    await expect(settingsLink).toBeVisible()
+    await settingsLink.click()
+    await page.waitForLoadState('networkidle')
+    await expect(page).toHaveURL(/\/workspace\/adaptive-routing\/settings(?:\?.*)?$/)
+    await expect(page.getByTestId('adaptive-settings')).toBeVisible()
+    await expect(page.getByTestId('adaptive-settings-direction-selection-enabled-switch')).toBeVisible()
   })
 
   test('should load guardrails configuration page', async ({ page }) => {

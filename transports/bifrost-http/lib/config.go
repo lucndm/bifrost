@@ -40,8 +40,10 @@ import (
 	"github.com/maximhq/bifrost/framework/objectstore"
 	plugins "github.com/maximhq/bifrost/framework/plugins"
 	"github.com/maximhq/bifrost/framework/vectorstore"
+	"github.com/maximhq/bifrost/plugins/adaptive"
 	"github.com/maximhq/bifrost/plugins/compat"
 	"github.com/maximhq/bifrost/plugins/governance"
+	"github.com/maximhq/bifrost/plugins/guardrails"
 	"github.com/maximhq/bifrost/plugins/logging"
 	"github.com/maximhq/bifrost/plugins/maxim"
 	"github.com/maximhq/bifrost/plugins/otel"
@@ -49,7 +51,6 @@ import (
 	"github.com/maximhq/bifrost/plugins/routing"
 	"github.com/maximhq/bifrost/plugins/routing/complexity"
 	"github.com/maximhq/bifrost/plugins/routing/rules"
-	"github.com/maximhq/bifrost/plugins/guardrails"
 	"github.com/maximhq/bifrost/plugins/semanticcache"
 	"github.com/maximhq/bifrost/plugins/telemetry"
 	"github.com/maximhq/bifrost/plugins/tokensaver"
@@ -137,6 +138,7 @@ var builtinPluginNames = []string{
 	maxim.PluginName,
 	routing.PluginName,
 	tokensaver.PluginName,
+	adaptive.PluginName,
 }
 
 func GetBuiltinPluginNames() []string {
