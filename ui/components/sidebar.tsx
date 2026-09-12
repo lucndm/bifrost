@@ -17,6 +17,7 @@ import {
 	FolderGit,
 	SquareKanban,
 	Gavel,
+	Gauge,
 	GitCompareArrows,
 	Globe,
 	Hexagon,
@@ -1012,6 +1013,13 @@ export default function AppSidebar() {
 						url: "/workspace/config/caching",
 						icon: DatabaseZap,
 						description: "Caching configuration",
+						hasAccess: hasSettingsAccess,
+					},
+					{
+						title: "Token Saver",
+						url: "/workspace/config/token-saver",
+						icon: Gauge,
+						description: "Tool result compression",
 						hasAccess: hasSettingsAccess,
 					},
 					{
