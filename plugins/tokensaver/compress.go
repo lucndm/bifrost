@@ -110,14 +110,21 @@ func (p *Plugin) compressResponses(req *schemas.BifrostResponsesRequest, stats *
 				return
 			}
 			tool := item.ResponsesToolMessage
-			if tool == nil || tool.Output == nil || tool.Output.ResponsesToolCallOutputStr == nil {
+			if tool == nil || tool.Output == nil {
 				return
 			}
 			// Error outputs are debugging signal — never compress.
 			if tool.Error != nil {
 				return
 			}
-			p.compressStringPtr(tool.Output.ResponsesToolCallOutputStr, stats)
+			if tool.Output.ResponsesToolCallOutputStr != nil {
+				p.compressStringPtr(tool.Output.ResponsesToolCallOutputStr, stats)
+			}
+			for j := range tool.Output.ResponsesFunctionToolCallOutputBlocks {
+				if block := &tool.Output.ResponsesFunctionToolCallOutputBlocks[j]; block.Text != nil {
+					p.compressStringPtr(block.Text, stats)
+				}
+			}
 		}()
 	}
 }

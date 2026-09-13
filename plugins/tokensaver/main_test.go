@@ -480,3 +480,34 @@ func TestPreRequestHookNoTracerIsFine(t *testing.T) {
 		t.Fatalf("nil ctx / nil tracer must not error: %v", err)
 	}
 }
+
+func TestCompressResponsesBlocksForm(t *testing.T) {
+	p := newTestPlugin(t)
+	big := makeUniqueLines(400, "out ")
+	text := big
+	itemType := schemas.ResponsesMessageTypeFunctionCallOutput
+	req := &schemas.BifrostRequest{ResponsesRequest: &schemas.BifrostResponsesRequest{
+		Input: []schemas.ResponsesMessage{{
+			Type: &itemType,
+			ResponsesToolMessage: &schemas.ResponsesToolMessage{
+				Output: &schemas.ResponsesToolMessageOutputStruct{
+					ResponsesFunctionToolCallOutputBlocks: []schemas.ResponsesMessageContentBlock{{
+						Type: schemas.ResponsesInputMessageContentBlockTypeText,
+						Text: &text,
+					}},
+				},
+			},
+		}},
+	}}
+	stats := p.compressRequest(req)
+	if stats.hits != 1 {
+		t.Fatalf("blocks-form output must compress, hits=%d", stats.hits)
+	}
+	got := *req.ResponsesRequest.Input[0].ResponsesToolMessage.Output.ResponsesFunctionToolCallOutputBlocks[0].Text
+	if !strings.Contains(got, "[token-saver:") {
+		t.Fatal("blocks text must be compressed in place")
+	}
+	if len(got) >= len(big) {
+		t.Fatal("compressed text must be smaller")
+	}
+}
