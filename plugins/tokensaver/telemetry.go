@@ -20,6 +20,8 @@ const (
 	spanAttrBytesSaved        = "rtk.request.bytes.saved"
 	spanAttrFiltersApplied    = "rtk.filters.applied"
 	spanAttrFilterHits        = "rtk.filter.hits"
+	spanAttrModel             = "rtk.model"
+	spanAttrVirtualKey        = "rtk.virtual_key"
 	spanAttrOptOut            = "rtk.optout"
 	spanAttrOptOutSource      = "rtk.optout.source"
 	spanAttrCavemanLevel      = "caveman.level"
@@ -47,7 +49,7 @@ func shapeForRequest(req *schemas.BifrostRequest) string {
 
 // setTokenSaverSpanAttributes writes the per-request RTK outcome onto the span
 // in one shot. Byte counts cover only blobs that actually passed the pipeline.
-func setTokenSaverSpanAttributes(span *schemas.Span, req *schemas.BifrostRequest, stats compressStats, resolved resolvedSettings, failOpen bool) {
+func setTokenSaverSpanAttributes(span *schemas.Span, req *schemas.BifrostRequest, stats compressStats, resolved resolvedSettings, failOpen bool, model, virtualKey string) {
 	features := []string{}
 	if resolved.RTK {
 		features = append(features, "rtk")
@@ -65,6 +67,8 @@ func setTokenSaverSpanAttributes(span *schemas.Span, req *schemas.BifrostRequest
 		spanAttrBytesSaved:      stats.savedBytes,
 		spanAttrFiltersApplied:  filters,
 		spanAttrFilterHits:      int64(stats.hits),
+		spanAttrModel:           model,
+		spanAttrVirtualKey:      virtualKey,
 		spanAttrOptOut:          false,
 		spanAttrOptOutSource:    "",
 		spanAttrCavemanLevel:    resolved.Caveman,

@@ -468,6 +468,12 @@ func TestPreRequestHookEmitsTokenSaverSpan(t *testing.T) {
 	if attrs["rtk.failopen"] != false {
 		t.Fatalf("rtk.failopen = %v", attrs["rtk.failopen"])
 	}
+	if attrs["rtk.model"] != "gpt-5" {
+		t.Fatalf("rtk.model = %v", attrs["rtk.model"])
+	}
+	if attrs["rtk.virtual_key"] != "" {
+		t.Fatalf("rtk.virtual_key = %v", attrs["rtk.virtual_key"])
+	}
 }
 
 func TestPreRequestHookNoTracerIsFine(t *testing.T) {
@@ -510,4 +516,38 @@ func TestCompressResponsesBlocksForm(t *testing.T) {
 	if len(got) >= len(big) {
 		t.Fatal("compressed text must be smaller")
 	}
+}
+
+func TestPreRequestHookSpanCarriesVirtualKey(t *testing.T) {
+	p, err := Init(&Config{Default: &Settings{RTK: boolPtr(true)}}, &mockLogger{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	big := makeUniqueLines(400, "line ")
+	req := &schemas.BifrostRequest{ChatRequest: &schemas.BifrostChatRequest{
+		Model: "glm-5.3-flash",
+		Input: []schemas.ChatMessage{toolMsg(big, false)},
+	}}
+	ctx := schemas.NewBifrostContext(t.Context(), time.Time{})
+	ctx.SetValue(schemas.BifrostContextKeyGovernanceVirtualKeyName, "opencode")
+	tracer, _ := newTestTracer(t)
+	ctx.SetValue(schemas.BifrostContextKeyTracer, tracer)
+	traceID := tracer.CreateTrace("")
+	ctx.SetValue(schemas.BifrostContextKeyTraceID, traceID)
+	if err := p.PreRequestHook(ctx, req); err != nil {
+		t.Fatal(err)
+	}
+	trace := tracer.EndTrace(traceID)
+	for _, s := range trace.Spans {
+		if s.Name == "rtk.token_saver" {
+			if s.Attributes["rtk.virtual_key"] != "opencode" {
+				t.Fatalf("rtk.virtual_key = %v, want opencode", s.Attributes["rtk.virtual_key"])
+			}
+			if s.Attributes["rtk.model"] != "glm-5.3-flash" {
+				t.Fatalf("rtk.model = %v", s.Attributes["rtk.model"])
+			}
+			return
+		}
+	}
+	t.Fatal("rtk.token_saver span not found")
 }

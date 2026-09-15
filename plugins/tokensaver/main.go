@@ -137,7 +137,7 @@ func (p *Plugin) PreRequestHook(ctx *schemas.BifrostContext, req *schemas.Bifros
 
 	stats, failOpen := p.runCompression(req)
 	if span != nil {
-		setTokenSaverSpanAttributes(span, req, stats, resolved, failOpen)
+		setTokenSaverSpanAttributes(span, req, stats, resolved, failOpen, model, virtualKey)
 	}
 	if tracer != nil && handle != nil {
 		if failOpen {
