@@ -36,6 +36,7 @@ import (
 	"github.com/maximhq/bifrost/plugins/logging"
 	"github.com/maximhq/bifrost/plugins/otel"
 	"github.com/maximhq/bifrost/plugins/prompts"
+	"github.com/maximhq/bifrost/plugins/quotatracker"
 	"github.com/maximhq/bifrost/plugins/routing"
 	"github.com/maximhq/bifrost/plugins/routing/complexity"
 	"github.com/maximhq/bifrost/plugins/semanticcache"
@@ -231,6 +232,11 @@ type BifrostHTTPServer struct {
 	LogOutputStyle  string
 	LogsCleaner     *logstore.LogsCleaner
 	AsyncJobCleaner *logstore.AsyncJobCleaner
+
+	// QuotaTracker polls provider-side subscription quota windows (GLM 5h
+	// session / weekly) and vetoes exhausted keys from routing. nil when the
+	// BIFROST_QUOTA_TRACKER_ENABLED gate is off.
+	QuotaTracker *quotatracker.Tracker
 
 	Client *bifrost.Bifrost
 	Config *lib.Config
@@ -2822,6 +2828,38 @@ func (s *BifrostHTTPServer) Bootstrap(ctx context.Context) error {
 	// Create account backed by the high-performance store (all processing is done in LoadFromDatabase)
 	// The account interface now benefits from ultra-fast config access times via in-memory storage
 	account := lib.NewBaseAccount(s.Config)
+
+	// Provider-side quota tracking (GLM coding-plan windows): poll the quota
+	// monitor API per key and veto exhausted keys from key selection so
+	// weighted routing never sends traffic into a guaranteed 429. Opt-in via
+	// BIFROST_QUOTA_TRACKER_ENABLED; the filter fails open on every tracker
+	// failure, so a broken quota endpoint can never remove a working key.
+	quotaCfg := quotatracker.ConfigFromEnv(nil)
+	if quotaCfg.Enabled {
+		s.QuotaTracker = quotatracker.New(quotaCfg, func() []quotatracker.ProviderKeys {
+			s.Config.Mu.RLock()
+			defer s.Config.Mu.RUnlock()
+			providers := make([]quotatracker.ProviderKeys, 0, len(s.Config.Providers))
+			for name, providerConfig := range s.Config.Providers {
+				baseURL := ""
+				if providerConfig.NetworkConfig != nil {
+					baseURL = providerConfig.NetworkConfig.BaseURL
+				}
+				keys := make([]quotatracker.TrackedKey, 0, len(providerConfig.Keys))
+				for _, k := range providerConfig.Keys {
+					if k.Enabled != nil && !*k.Enabled {
+						continue
+					}
+					keys = append(keys, quotatracker.TrackedKey{ID: k.ID, Name: k.Name, Value: k.Value.GetValue()})
+				}
+				providers = append(providers, quotatracker.ProviderKeys{Provider: string(name), BaseURL: baseURL, Keys: keys})
+			}
+			return providers
+		}, logger)
+		logger.Info("provider quota tracker enabled (interval %s, veto threshold %.0f%%, hosts %v)",
+			quotaCfg.PollInterval, quotaCfg.VetoThreshold, quotaCfg.TrackedHosts)
+	}
+
 	s.Client, err = bifrost.Init(ctx, schemas.BifrostConfig{
 		Account:            account,
 		InitialPoolSize:    s.Config.ClientConfig.InitialPoolSize,
@@ -2834,7 +2872,19 @@ func (s *BifrostHTTPServer) Bootstrap(ctx context.Context) error {
 		Logger:             logger,
 		KVStore:            s.Config.KVStore,
 		ModelCatalog:       s.Config.ModelCatalog,
+		KeyPoolFilter:      s.QuotaTracker.Filter(),
 	})
+	if err != nil {
+		return fmt.Errorf("failed to initialize bifrost: %v", err)
+	}
+	logger.Info("bifrost client initialized")
+	if s.QuotaTracker != nil {
+		s.QuotaTracker.Start(ctx)
+		// Feed the otel plugin's bifrost_provider_quota_* gauges. The callback
+		// reads this source at scrape time, so ordering with plugin init does
+		// not matter.
+		otel.SetQuotaSource(s.QuotaTracker)
+	}
 	if err != nil {
 		return fmt.Errorf("failed to initialize bifrost: %v", err)
 	}
@@ -3160,6 +3210,10 @@ func (s *BifrostHTTPServer) Start() error {
 			if s.AsyncJobCleaner != nil {
 				logger.Info("stopping async job cleaner...")
 				s.AsyncJobCleaner.StopCleanupRoutine()
+			}
+			if s.QuotaTracker != nil {
+				logger.Info("stopping provider quota tracker...")
+				s.QuotaTracker.Stop()
 			}
 			if s.WebhookDispatcher != nil {
 				logger.Info("stopping webhook dispatcher...")

@@ -681,6 +681,11 @@ func (p *OtelPlugin) buildTarget(index int, profile *Profile) (*otelTarget, erro
 			}
 			return nil, fmt.Errorf("profile %d: failed to initialize metrics exporter: %w", index, err)
 		}
+		// Provider quota gauges (bifrost_provider_quota_*): registered per
+		// exporter instance; the snapshots come from the process-wide source
+		// installed by the transport via SetQuotaSource, so registration
+		// order (tracker vs plugin) never matters.
+		target.metricsExporter.initQuotaGauges(logger)
 		logger.Info("OTEL metrics push enabled for profile %d, pushing to %s every %d seconds", index, profile.MetricsEndpoint.GetValue(), pushInterval)
 	}
 

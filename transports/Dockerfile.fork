@@ -26,22 +26,31 @@ ENV CGO_ENABLED=1 GOOS=linux
 
 # Copy module metadata first so dependency downloads stay layer-cached.
 # go.work is gitignored in this repo, so it is generated here instead of copied.
+# Fork-local plugins (adaptive, guardrails, tokensaver, quotatracker) and the
+# fork-patched otel (quota gauges) must ALL appear below; otel pins the
+# version transports/go.mod requires — bump both together.
 COPY core/go.mod core/go.sum ./core/
 COPY framework/go.mod framework/go.sum ./framework/
 COPY plugins/adaptive/go.mod plugins/adaptive/go.sum ./plugins/adaptive/
 COPY plugins/guardrails/go.mod plugins/guardrails/go.sum ./plugins/guardrails/
+COPY plugins/otel/go.mod plugins/otel/go.sum ./plugins/otel/
+COPY plugins/quotatracker/go.mod plugins/quotatracker/go.sum ./plugins/quotatracker/
 COPY plugins/tokensaver/go.mod plugins/tokensaver/go.sum ./plugins/tokensaver/
 COPY transports/go.mod transports/go.sum ./transports/
 
-RUN printf 'go 1.27.0\n\nuse (\n\t./core\n\t./framework\n\t./plugins/adaptive\n\t./plugins/guardrails\n\t./plugins/tokensaver\n\t./transports\n)\n\nreplace github.com/maximhq/bifrost/plugins/adaptive v0.1.0 => ./plugins/adaptive\nreplace github.com/maximhq/bifrost/plugins/guardrails v0.1.0 => ./plugins/guardrails\nreplace github.com/maximhq/bifrost/plugins/tokensaver v0.1.0 => ./plugins/tokensaver\n' > go.work
+RUN printf 'go 1.27.0\n\nuse (\n\t./core\n\t./framework\n\t./plugins/adaptive\n\t./plugins/guardrails\n\t./plugins/otel\n\t./plugins/quotatracker\n\t./plugins/tokensaver\n\t./transports\n)\n\nreplace github.com/maximhq/bifrost/plugins/adaptive v0.1.0 => ./plugins/adaptive\nreplace github.com/maximhq/bifrost/plugins/guardrails v0.1.0 => ./plugins/guardrails\nreplace github.com/maximhq/bifrost/plugins/otel v1.5.2 => ./plugins/otel\nreplace github.com/maximhq/bifrost/plugins/quotatracker v0.1.0 => ./plugins/quotatracker\nreplace github.com/maximhq/bifrost/plugins/tokensaver v0.1.0 => ./plugins/tokensaver\n' > go.work
 
 RUN go -C core mod download && \
   go -C framework mod download && \
   go -C plugins/adaptive mod download && \
   go -C plugins/guardrails mod download && \
+  go -C plugins/otel mod download && \
+  go -C plugins/quotatracker mod download && \
   go -C plugins/tokensaver mod download && \
   go -C transports mod edit -replace=github.com/maximhq/bifrost/plugins/adaptive@v0.1.0=../plugins/adaptive && \
   go -C transports mod edit -replace=github.com/maximhq/bifrost/plugins/guardrails@v0.1.0=../plugins/guardrails && \
+  go -C transports mod edit -replace=github.com/maximhq/bifrost/plugins/otel@v1.5.2=../plugins/otel && \
+  go -C transports mod edit -replace=github.com/maximhq/bifrost/plugins/quotatracker@v0.1.0=../plugins/quotatracker && \
   go -C transports mod edit -replace=github.com/maximhq/bifrost/plugins/tokensaver@v0.1.0=../plugins/tokensaver && \
   go -C transports mod download && \
   go work sync
@@ -51,6 +60,8 @@ COPY core/ ./core/
 COPY framework/ ./framework/
 COPY plugins/adaptive/ ./plugins/adaptive/
 COPY plugins/guardrails/ ./plugins/guardrails/
+COPY plugins/otel/ ./plugins/otel/
+COPY plugins/quotatracker/ ./plugins/quotatracker/
 COPY plugins/tokensaver/ ./plugins/tokensaver/
 COPY transports/ ./transports/
 

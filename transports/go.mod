@@ -26,6 +26,7 @@ require (
 	github.com/maximhq/bifrost/plugins/modelcatalogresolver v1.1.2
 	github.com/maximhq/bifrost/plugins/otel v1.5.2
 	github.com/maximhq/bifrost/plugins/prompts v1.1.2
+	github.com/maximhq/bifrost/plugins/quotatracker v0.1.0
 	github.com/maximhq/bifrost/plugins/routing v1.0.2
 	github.com/maximhq/bifrost/plugins/semanticcache v1.6.2
 	github.com/maximhq/bifrost/plugins/telemetry v1.6.2
