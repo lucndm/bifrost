@@ -53,7 +53,7 @@ jobs:
           IMAGE="${REGISTRY}/${GITHUB_REPOSITORY,,}"
           TAGS="${IMAGE}:${GITHUB_REF_NAME}"
           if [[ "${GITHUB_REF_NAME}" == v* ]]; then
-            TAGS="${TAGS},${IMAGE}:${VERSION},latest"
+            TAGS="${TAGS},${IMAGE}:${VERSION},${IMAGE}:latest"
           fi
           {
             echo "version=${VERSION}"
