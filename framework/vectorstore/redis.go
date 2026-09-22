@@ -1375,7 +1375,51 @@ func (s *RedisStore) Add(ctx context.Context, namespace string, id string, embed
 		return fmt.Errorf("failed to store semantic cache entry: %w", err)
 	}
 
+	// Callers may carry an epoch-seconds deadline in metadata (the semantic
+	// cache plugin writes "expires_at"). Apply it as a real key TTL so dead
+	// entries self-destruct instead of accumulating until restart; without
+	// this the hash outlives its usefulness forever (reads only filter
+	// expired entries, nothing deletes them). A 60s grace keeps the key
+	// readable through any in-flight lookup racing the expiry boundary.
+	if ttl, ok := ttlFromMetadata(metadata); ok {
+		if err := s.client.Expire(ctx, key, ttl).Err(); err != nil {
+			s.logger.Warn(fmt.Sprintf("redis vectorstore: failed to set TTL on %s: %v", key, err))
+		}
+	}
+
 	return nil
+}
+
+// ttlFromMetadata extracts a key TTL from a metadata["expires_at"]
+// epoch-seconds value, padded with a 60s grace past the deadline.
+// Returns ok=false when absent, unparseable, or already in the past.
+func ttlFromMetadata(metadata map[string]interface{}) (time.Duration, bool) {
+	raw, ok := metadata["expires_at"]
+	if !ok {
+		return 0, false
+	}
+	var expiresAt int64
+	switch v := raw.(type) {
+	case int64:
+		expiresAt = v
+	case int:
+		expiresAt = int64(v)
+	case float64:
+		expiresAt = int64(v)
+	case string:
+		parsed, err := strconv.ParseInt(strings.TrimSpace(v), 10, 64)
+		if err != nil {
+			return 0, false
+		}
+		expiresAt = parsed
+	default:
+		return 0, false
+	}
+	ttl := time.Until(time.Unix(expiresAt, 0)) + 60*time.Second
+	if ttl <= 0 {
+		return 0, false
+	}
+	return ttl, true
 }
 
 // Delete deletes a chunk from the Redis vector store.
