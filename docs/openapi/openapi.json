@@ -62,6 +62,10 @@
       "description": "Document reranking by relevance to a query"
     },
     {
+      "name": "Decisions",
+      "description": "Structured decisions evaluated against annotated function-tool definitions"
+    },
+    {
       "name": "Embeddings",
       "description": "Text embedding generation"
     },
@@ -124,6 +128,10 @@
     {
       "name": "Cohere Integration",
       "description": "Cohere compatible API endpoints (/cohere/*)"
+    },
+    {
+      "name": "Typesafe Integration",
+      "description": "Typesafe compatible API endpoints (/typesafe/*)"
     },
     {
       "name": "LiteLLM Integration",
@@ -1897,6 +1905,69 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/RerankResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BifrostError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BifrostError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "VirtualKeyAuth": []
+          },
+          {
+            "ApiKeyAuth": []
+          }
+        ]
+      }
+    },
+    "/v1/decisions": {
+      "post": {
+        "operationId": "createDecision",
+        "summary": "Evaluate a decision",
+        "description": "Evaluates state against a map of named questions and returns one typed\nanswer per question, with per-answer confidence, probabilities, and\nlegend metadata. Served by decision providers such as Typesafe's jev models.\n",
+        "tags": [
+          "Decisions"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DecisionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DecisionResponse"
                 }
               }
             }
@@ -27636,6 +27707,300 @@
         ]
       }
     },
+    "/typesafe/v1/systemone": {
+      "post": {
+        "operationId": "typesafeSystemOne",
+        "summary": "Evaluate state (Typesafe format)",
+        "description": "Evaluates state against a map of named questions using Typesafe's native\nSystem One API. The request body matches Typesafe's native format; question\nidentifiers become result field names.\n",
+        "tags": [
+          "Typesafe Integration"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "state",
+                  "model",
+                  "questions"
+                ],
+                "properties": {
+                  "state": {
+                    "description": "A plain string, or structured data (object or array) to evaluate.",
+                    "oneOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "object",
+                        "additionalProperties": true
+                      },
+                      {
+                        "type": "array",
+                        "items": {}
+                      }
+                    ]
+                  },
+                  "model": {
+                    "type": "string",
+                    "description": "Typesafe model identifier (e.g. `jev-1.13.0`, `jev-latest`)."
+                  },
+                  "questions": {
+                    "type": "object",
+                    "minProperties": 1,
+                    "description": "Map of named questions.",
+                    "additionalProperties": {
+                      "type": "object",
+                      "required": [
+                        "type",
+                        "instructions"
+                      ],
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "noul",
+                            "choice",
+                            "score"
+                          ],
+                          "description": "Question type. `noul` returns a probability from 0 to 1, `choice` a selection with probabilities, `score` a probability-weighted rubric value."
+                        },
+                        "instructions": {
+                          "description": "Question instructions. A string, or structured data.",
+                          "oneOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "object",
+                              "additionalProperties": true
+                            },
+                            {
+                              "type": "array",
+                              "items": {}
+                            }
+                          ]
+                        },
+                        "criteria": {
+                          "description": "Optional `true`/`false` descriptions for `noul`; a map of option\nto description for `choice` (at most 255 options); an ordered\narray of 2-10 level descriptions for `score`.\n",
+                          "oneOf": [
+                            {
+                              "type": "object",
+                              "additionalProperties": {
+                                "type": "string"
+                              }
+                            },
+                            {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful response in Typesafe's native shape",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "model",
+                    "answers"
+                  ],
+                  "properties": {
+                    "model": {
+                      "type": "string",
+                      "description": "Model version that performed the evaluation"
+                    },
+                    "answers": {
+                      "type": "object",
+                      "description": "Map matching question identifiers to answers",
+                      "additionalProperties": {
+                        "type": "object",
+                        "required": [
+                          "type"
+                        ],
+                        "properties": {
+                          "type": {
+                            "type": "string",
+                            "enum": [
+                              "noul",
+                              "choice",
+                              "score"
+                            ]
+                          },
+                          "noul": {
+                            "type": "number",
+                            "description": "Probability from 0 to 1 (noul answers)"
+                          },
+                          "choice": {
+                            "type": "string",
+                            "description": "Selected option (choice answers)"
+                          },
+                          "score": {
+                            "type": "number",
+                            "description": "Probability-weighted value (score answers)"
+                          },
+                          "probabilities": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "type": "number"
+                            }
+                          },
+                          "legend": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "type": "string"
+                            }
+                          },
+                          "confidence": {
+                            "type": "number"
+                          }
+                        }
+                      }
+                    },
+                    "usage": {
+                      "type": "object",
+                      "properties": {
+                        "input_tokens": {
+                          "type": "integer"
+                        },
+                        "output_tokens": {
+                          "type": "integer"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BifrostError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BifrostError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "VirtualKeyAuth": []
+          },
+          {
+            "ApiKeyAuth": []
+          }
+        ]
+      }
+    },
+    "/typesafe/v1/models": {
+      "get": {
+        "operationId": "typesafeListModels",
+        "summary": "List models (Typesafe format)",
+        "description": "Lists available Typesafe models in the native shape. Typesafe documents no\nupstream listing endpoint, so the catalog is served from Bifrost's model\ndatasheet.\n",
+        "tags": [
+          "Typesafe Integration"
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "models"
+                  ],
+                  "properties": {
+                    "models": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "name"
+                        ],
+                        "properties": {
+                          "name": {
+                            "type": "string",
+                            "example": "jev-latest"
+                          },
+                          "description": {
+                            "type": "string"
+                          },
+                          "release_date": {
+                            "type": "string",
+                            "format": "date-time"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BifrostError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BifrostError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "VirtualKeyAuth": []
+          },
+          {
+            "ApiKeyAuth": []
+          }
+        ]
+      }
+    },
     "/cohere/v1/tokenize": {
       "post": {
         "operationId": "cohereTokenize",
@@ -46923,7 +47288,7 @@
           {
             "name": "search",
             "in": "query",
-            "description": "Case-insensitive search by virtual key name",
+            "description": "Case-insensitive search across the virtual key name, its team name, and its customer name. Enterprise additionally matches the name and email of the user the key is assigned to.",
             "schema": {
               "type": "string"
             }
@@ -52691,10 +53056,68 @@
                             ],
                             "description": "When the last scheduled rotation run finished."
                           },
-                          "mcp_tool_groups": {
+                          "virtual_mcps": {
                             "type": "array",
                             "items": {
                               "type": "object",
+                              "description": "A Virtual MCP granted to the profile. Assignments are a set, so a repeat collapses rather than doubling.",
+                              "anyOf": [
+                                {
+                                  "required": [
+                                    "virtual_mcp_name"
+                                  ]
+                                },
+                                {
+                                  "required": [
+                                    "virtual_mcp_id"
+                                  ]
+                                }
+                              ],
+                              "properties": {
+                                "virtual_mcp_name": {
+                                  "type": "string",
+                                  "description": "Name of the Virtual MCP. Resolved to the stored Virtual MCP on save; a name that matches none is refused."
+                                },
+                                "virtual_mcp_id": {
+                                  "type": "integer",
+                                  "format": "uint",
+                                  "minimum": 1,
+                                  "description": "Virtual MCP ID, as an alternative to virtual_mcp_name. Wins when both are set."
+                                }
+                              }
+                            }
+                          },
+                          "mcp_configs": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "description": "The tools of one MCP client the profile may execute.",
+                              "required": [
+                                "mcp_client_id"
+                              ],
+                              "properties": {
+                                "mcp_client_id": {
+                                  "type": "string",
+                                  "description": "MCP client ID or name. A name is resolved to the stored client id on save; a ref matching no client is kept as given."
+                                },
+                                "tools_to_execute": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string"
+                                  },
+                                  "description": "[\"*\"] allows every tool including ones added later, [] allows none, and a named list allows only those tools."
+                                }
+                              }
+                            }
+                          },
+                          "mcp_tool_groups": {
+                            "deprecated": true,
+                            "description": "DEPRECATED: use virtual_mcps.",
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "deprecated": true,
+                              "description": "DEPRECATED: use AccessProfileVirtualMCPLink (virtual_mcps).",
                               "required": [
                                 "tool_group_id"
                               ],
@@ -52707,6 +53130,8 @@
                             }
                           },
                           "mcp_servers": {
+                            "deprecated": true,
+                            "description": "DEPRECATED: use mcp_configs. Folded in on save.",
                             "type": "array",
                             "items": {
                               "type": "object",
@@ -52721,6 +53146,8 @@
                             }
                           },
                           "mcp_tool_overrides": {
+                            "deprecated": true,
+                            "description": "DEPRECATED: use mcp_configs. Folded in on save.",
                             "type": "array",
                             "items": {
                               "type": "object",
@@ -53103,10 +53530,68 @@
                     "format": "date-time",
                     "description": "Optional first rotation time; must be in the future and requires auto_rotation_interval. Defaults to now + interval."
                   },
-                  "mcp_tool_groups": {
+                  "virtual_mcps": {
                     "type": "array",
                     "items": {
                       "type": "object",
+                      "description": "A Virtual MCP granted to the profile. Assignments are a set, so a repeat collapses rather than doubling.",
+                      "anyOf": [
+                        {
+                          "required": [
+                            "virtual_mcp_name"
+                          ]
+                        },
+                        {
+                          "required": [
+                            "virtual_mcp_id"
+                          ]
+                        }
+                      ],
+                      "properties": {
+                        "virtual_mcp_name": {
+                          "type": "string",
+                          "description": "Name of the Virtual MCP. Resolved to the stored Virtual MCP on save; a name that matches none is refused."
+                        },
+                        "virtual_mcp_id": {
+                          "type": "integer",
+                          "format": "uint",
+                          "minimum": 1,
+                          "description": "Virtual MCP ID, as an alternative to virtual_mcp_name. Wins when both are set."
+                        }
+                      }
+                    }
+                  },
+                  "mcp_configs": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "description": "The tools of one MCP client the profile may execute.",
+                      "required": [
+                        "mcp_client_id"
+                      ],
+                      "properties": {
+                        "mcp_client_id": {
+                          "type": "string",
+                          "description": "MCP client ID or name. A name is resolved to the stored client id on save; a ref matching no client is kept as given."
+                        },
+                        "tools_to_execute": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          },
+                          "description": "[\"*\"] allows every tool including ones added later, [] allows none, and a named list allows only those tools."
+                        }
+                      }
+                    }
+                  },
+                  "mcp_tool_groups": {
+                    "deprecated": true,
+                    "description": "DEPRECATED: use virtual_mcps.",
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "deprecated": true,
+                      "description": "DEPRECATED: use AccessProfileVirtualMCPLink (virtual_mcps).",
                       "required": [
                         "tool_group_id"
                       ],
@@ -53119,6 +53604,8 @@
                     }
                   },
                   "mcp_servers": {
+                    "deprecated": true,
+                    "description": "DEPRECATED: use mcp_configs. Folded in on save.",
                     "type": "array",
                     "items": {
                       "type": "object",
@@ -53133,6 +53620,8 @@
                     }
                   },
                   "mcp_tool_overrides": {
+                    "deprecated": true,
+                    "description": "DEPRECATED: use mcp_configs. Folded in on save.",
                     "type": "array",
                     "items": {
                       "type": "object",
@@ -53482,10 +53971,68 @@
                           ],
                           "description": "When the last scheduled rotation run finished."
                         },
-                        "mcp_tool_groups": {
+                        "virtual_mcps": {
                           "type": "array",
                           "items": {
                             "type": "object",
+                            "description": "A Virtual MCP granted to the profile. Assignments are a set, so a repeat collapses rather than doubling.",
+                            "anyOf": [
+                              {
+                                "required": [
+                                  "virtual_mcp_name"
+                                ]
+                              },
+                              {
+                                "required": [
+                                  "virtual_mcp_id"
+                                ]
+                              }
+                            ],
+                            "properties": {
+                              "virtual_mcp_name": {
+                                "type": "string",
+                                "description": "Name of the Virtual MCP. Resolved to the stored Virtual MCP on save; a name that matches none is refused."
+                              },
+                              "virtual_mcp_id": {
+                                "type": "integer",
+                                "format": "uint",
+                                "minimum": 1,
+                                "description": "Virtual MCP ID, as an alternative to virtual_mcp_name. Wins when both are set."
+                              }
+                            }
+                          }
+                        },
+                        "mcp_configs": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "description": "The tools of one MCP client the profile may execute.",
+                            "required": [
+                              "mcp_client_id"
+                            ],
+                            "properties": {
+                              "mcp_client_id": {
+                                "type": "string",
+                                "description": "MCP client ID or name. A name is resolved to the stored client id on save; a ref matching no client is kept as given."
+                              },
+                              "tools_to_execute": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                },
+                                "description": "[\"*\"] allows every tool including ones added later, [] allows none, and a named list allows only those tools."
+                              }
+                            }
+                          }
+                        },
+                        "mcp_tool_groups": {
+                          "deprecated": true,
+                          "description": "DEPRECATED: use virtual_mcps.",
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "deprecated": true,
+                            "description": "DEPRECATED: use AccessProfileVirtualMCPLink (virtual_mcps).",
                             "required": [
                               "tool_group_id"
                             ],
@@ -53498,6 +54045,8 @@
                           }
                         },
                         "mcp_servers": {
+                          "deprecated": true,
+                          "description": "DEPRECATED: use mcp_configs. Folded in on save.",
                           "type": "array",
                           "items": {
                             "type": "object",
@@ -53512,6 +54061,8 @@
                           }
                         },
                         "mcp_tool_overrides": {
+                          "deprecated": true,
+                          "description": "DEPRECATED: use mcp_configs. Folded in on save.",
                           "type": "array",
                           "items": {
                             "type": "object",
@@ -53922,10 +54473,68 @@
                           ],
                           "description": "When the last scheduled rotation run finished."
                         },
-                        "mcp_tool_groups": {
+                        "virtual_mcps": {
                           "type": "array",
                           "items": {
                             "type": "object",
+                            "description": "A Virtual MCP granted to the profile. Assignments are a set, so a repeat collapses rather than doubling.",
+                            "anyOf": [
+                              {
+                                "required": [
+                                  "virtual_mcp_name"
+                                ]
+                              },
+                              {
+                                "required": [
+                                  "virtual_mcp_id"
+                                ]
+                              }
+                            ],
+                            "properties": {
+                              "virtual_mcp_name": {
+                                "type": "string",
+                                "description": "Name of the Virtual MCP. Resolved to the stored Virtual MCP on save; a name that matches none is refused."
+                              },
+                              "virtual_mcp_id": {
+                                "type": "integer",
+                                "format": "uint",
+                                "minimum": 1,
+                                "description": "Virtual MCP ID, as an alternative to virtual_mcp_name. Wins when both are set."
+                              }
+                            }
+                          }
+                        },
+                        "mcp_configs": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "description": "The tools of one MCP client the profile may execute.",
+                            "required": [
+                              "mcp_client_id"
+                            ],
+                            "properties": {
+                              "mcp_client_id": {
+                                "type": "string",
+                                "description": "MCP client ID or name. A name is resolved to the stored client id on save; a ref matching no client is kept as given."
+                              },
+                              "tools_to_execute": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                },
+                                "description": "[\"*\"] allows every tool including ones added later, [] allows none, and a named list allows only those tools."
+                              }
+                            }
+                          }
+                        },
+                        "mcp_tool_groups": {
+                          "deprecated": true,
+                          "description": "DEPRECATED: use virtual_mcps.",
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "deprecated": true,
+                            "description": "DEPRECATED: use AccessProfileVirtualMCPLink (virtual_mcps).",
                             "required": [
                               "tool_group_id"
                             ],
@@ -53938,6 +54547,8 @@
                           }
                         },
                         "mcp_servers": {
+                          "deprecated": true,
+                          "description": "DEPRECATED: use mcp_configs. Folded in on save.",
                           "type": "array",
                           "items": {
                             "type": "object",
@@ -53952,6 +54563,8 @@
                           }
                         },
                         "mcp_tool_overrides": {
+                          "deprecated": true,
+                          "description": "DEPRECATED: use mcp_configs. Folded in on save.",
                           "type": "array",
                           "items": {
                             "type": "object",
@@ -54378,10 +54991,68 @@
                     ],
                     "description": "Override the next rotation time (must be in the future). null clears it, which is only valid when the interval is off. Omit to keep the existing schedule; a changed interval re-anchors it to now + interval."
                   },
-                  "mcp_tool_groups": {
+                  "virtual_mcps": {
                     "type": "array",
                     "items": {
                       "type": "object",
+                      "description": "A Virtual MCP granted to the profile. Assignments are a set, so a repeat collapses rather than doubling.",
+                      "anyOf": [
+                        {
+                          "required": [
+                            "virtual_mcp_name"
+                          ]
+                        },
+                        {
+                          "required": [
+                            "virtual_mcp_id"
+                          ]
+                        }
+                      ],
+                      "properties": {
+                        "virtual_mcp_name": {
+                          "type": "string",
+                          "description": "Name of the Virtual MCP. Resolved to the stored Virtual MCP on save; a name that matches none is refused."
+                        },
+                        "virtual_mcp_id": {
+                          "type": "integer",
+                          "format": "uint",
+                          "minimum": 1,
+                          "description": "Virtual MCP ID, as an alternative to virtual_mcp_name. Wins when both are set."
+                        }
+                      }
+                    }
+                  },
+                  "mcp_configs": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "description": "The tools of one MCP client the profile may execute.",
+                      "required": [
+                        "mcp_client_id"
+                      ],
+                      "properties": {
+                        "mcp_client_id": {
+                          "type": "string",
+                          "description": "MCP client ID or name. A name is resolved to the stored client id on save; a ref matching no client is kept as given."
+                        },
+                        "tools_to_execute": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          },
+                          "description": "[\"*\"] allows every tool including ones added later, [] allows none, and a named list allows only those tools."
+                        }
+                      }
+                    }
+                  },
+                  "mcp_tool_groups": {
+                    "deprecated": true,
+                    "description": "DEPRECATED: use virtual_mcps.",
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "deprecated": true,
+                      "description": "DEPRECATED: use AccessProfileVirtualMCPLink (virtual_mcps).",
                       "required": [
                         "tool_group_id"
                       ],
@@ -54394,6 +55065,8 @@
                     }
                   },
                   "mcp_servers": {
+                    "deprecated": true,
+                    "description": "DEPRECATED: use mcp_configs. Folded in on save.",
                     "type": "array",
                     "items": {
                       "type": "object",
@@ -54408,6 +55081,8 @@
                     }
                   },
                   "mcp_tool_overrides": {
+                    "deprecated": true,
+                    "description": "DEPRECATED: use mcp_configs. Folded in on save.",
                     "type": "array",
                     "items": {
                       "type": "object",
@@ -54757,10 +55432,68 @@
                           ],
                           "description": "When the last scheduled rotation run finished."
                         },
-                        "mcp_tool_groups": {
+                        "virtual_mcps": {
                           "type": "array",
                           "items": {
                             "type": "object",
+                            "description": "A Virtual MCP granted to the profile. Assignments are a set, so a repeat collapses rather than doubling.",
+                            "anyOf": [
+                              {
+                                "required": [
+                                  "virtual_mcp_name"
+                                ]
+                              },
+                              {
+                                "required": [
+                                  "virtual_mcp_id"
+                                ]
+                              }
+                            ],
+                            "properties": {
+                              "virtual_mcp_name": {
+                                "type": "string",
+                                "description": "Name of the Virtual MCP. Resolved to the stored Virtual MCP on save; a name that matches none is refused."
+                              },
+                              "virtual_mcp_id": {
+                                "type": "integer",
+                                "format": "uint",
+                                "minimum": 1,
+                                "description": "Virtual MCP ID, as an alternative to virtual_mcp_name. Wins when both are set."
+                              }
+                            }
+                          }
+                        },
+                        "mcp_configs": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "description": "The tools of one MCP client the profile may execute.",
+                            "required": [
+                              "mcp_client_id"
+                            ],
+                            "properties": {
+                              "mcp_client_id": {
+                                "type": "string",
+                                "description": "MCP client ID or name. A name is resolved to the stored client id on save; a ref matching no client is kept as given."
+                              },
+                              "tools_to_execute": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                },
+                                "description": "[\"*\"] allows every tool including ones added later, [] allows none, and a named list allows only those tools."
+                              }
+                            }
+                          }
+                        },
+                        "mcp_tool_groups": {
+                          "deprecated": true,
+                          "description": "DEPRECATED: use virtual_mcps.",
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "deprecated": true,
+                            "description": "DEPRECATED: use AccessProfileVirtualMCPLink (virtual_mcps).",
                             "required": [
                               "tool_group_id"
                             ],
@@ -54773,6 +55506,8 @@
                           }
                         },
                         "mcp_servers": {
+                          "deprecated": true,
+                          "description": "DEPRECATED: use mcp_configs. Folded in on save.",
                           "type": "array",
                           "items": {
                             "type": "object",
@@ -54787,6 +55522,8 @@
                           }
                         },
                         "mcp_tool_overrides": {
+                          "deprecated": true,
+                          "description": "DEPRECATED: use mcp_configs. Folded in on save.",
                           "type": "array",
                           "items": {
                             "type": "object",
@@ -55264,10 +56001,68 @@
                           ],
                           "description": "When the last scheduled rotation run finished."
                         },
-                        "mcp_tool_groups": {
+                        "virtual_mcps": {
                           "type": "array",
                           "items": {
                             "type": "object",
+                            "description": "A Virtual MCP granted to the profile. Assignments are a set, so a repeat collapses rather than doubling.",
+                            "anyOf": [
+                              {
+                                "required": [
+                                  "virtual_mcp_name"
+                                ]
+                              },
+                              {
+                                "required": [
+                                  "virtual_mcp_id"
+                                ]
+                              }
+                            ],
+                            "properties": {
+                              "virtual_mcp_name": {
+                                "type": "string",
+                                "description": "Name of the Virtual MCP. Resolved to the stored Virtual MCP on save; a name that matches none is refused."
+                              },
+                              "virtual_mcp_id": {
+                                "type": "integer",
+                                "format": "uint",
+                                "minimum": 1,
+                                "description": "Virtual MCP ID, as an alternative to virtual_mcp_name. Wins when both are set."
+                              }
+                            }
+                          }
+                        },
+                        "mcp_configs": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "description": "The tools of one MCP client the profile may execute.",
+                            "required": [
+                              "mcp_client_id"
+                            ],
+                            "properties": {
+                              "mcp_client_id": {
+                                "type": "string",
+                                "description": "MCP client ID or name. A name is resolved to the stored client id on save; a ref matching no client is kept as given."
+                              },
+                              "tools_to_execute": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                },
+                                "description": "[\"*\"] allows every tool including ones added later, [] allows none, and a named list allows only those tools."
+                              }
+                            }
+                          }
+                        },
+                        "mcp_tool_groups": {
+                          "deprecated": true,
+                          "description": "DEPRECATED: use virtual_mcps.",
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "deprecated": true,
+                            "description": "DEPRECATED: use AccessProfileVirtualMCPLink (virtual_mcps).",
                             "required": [
                               "tool_group_id"
                             ],
@@ -55280,6 +56075,8 @@
                           }
                         },
                         "mcp_servers": {
+                          "deprecated": true,
+                          "description": "DEPRECATED: use mcp_configs. Folded in on save.",
                           "type": "array",
                           "items": {
                             "type": "object",
@@ -55294,6 +56091,8 @@
                           }
                         },
                         "mcp_tool_overrides": {
+                          "deprecated": true,
+                          "description": "DEPRECATED: use mcp_configs. Folded in on save.",
                           "type": "array",
                           "items": {
                             "type": "object",
@@ -55693,10 +56492,68 @@
                           ],
                           "description": "When the last scheduled rotation run finished."
                         },
-                        "mcp_tool_groups": {
+                        "virtual_mcps": {
                           "type": "array",
                           "items": {
                             "type": "object",
+                            "description": "A Virtual MCP granted to the profile. Assignments are a set, so a repeat collapses rather than doubling.",
+                            "anyOf": [
+                              {
+                                "required": [
+                                  "virtual_mcp_name"
+                                ]
+                              },
+                              {
+                                "required": [
+                                  "virtual_mcp_id"
+                                ]
+                              }
+                            ],
+                            "properties": {
+                              "virtual_mcp_name": {
+                                "type": "string",
+                                "description": "Name of the Virtual MCP. Resolved to the stored Virtual MCP on save; a name that matches none is refused."
+                              },
+                              "virtual_mcp_id": {
+                                "type": "integer",
+                                "format": "uint",
+                                "minimum": 1,
+                                "description": "Virtual MCP ID, as an alternative to virtual_mcp_name. Wins when both are set."
+                              }
+                            }
+                          }
+                        },
+                        "mcp_configs": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "description": "The tools of one MCP client the profile may execute.",
+                            "required": [
+                              "mcp_client_id"
+                            ],
+                            "properties": {
+                              "mcp_client_id": {
+                                "type": "string",
+                                "description": "MCP client ID or name. A name is resolved to the stored client id on save; a ref matching no client is kept as given."
+                              },
+                              "tools_to_execute": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                },
+                                "description": "[\"*\"] allows every tool including ones added later, [] allows none, and a named list allows only those tools."
+                              }
+                            }
+                          }
+                        },
+                        "mcp_tool_groups": {
+                          "deprecated": true,
+                          "description": "DEPRECATED: use virtual_mcps.",
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "deprecated": true,
+                            "description": "DEPRECATED: use AccessProfileVirtualMCPLink (virtual_mcps).",
                             "required": [
                               "tool_group_id"
                             ],
@@ -55709,6 +56566,8 @@
                           }
                         },
                         "mcp_servers": {
+                          "deprecated": true,
+                          "description": "DEPRECATED: use mcp_configs. Folded in on save.",
                           "type": "array",
                           "items": {
                             "type": "object",
@@ -55723,6 +56582,8 @@
                           }
                         },
                         "mcp_tool_overrides": {
+                          "deprecated": true,
+                          "description": "DEPRECATED: use mcp_configs. Folded in on save.",
                           "type": "array",
                           "items": {
                             "type": "object",
@@ -56143,10 +57004,68 @@
                           ],
                           "description": "When the last scheduled rotation run finished."
                         },
-                        "mcp_tool_groups": {
+                        "virtual_mcps": {
                           "type": "array",
                           "items": {
                             "type": "object",
+                            "description": "A Virtual MCP granted to the profile. Assignments are a set, so a repeat collapses rather than doubling.",
+                            "anyOf": [
+                              {
+                                "required": [
+                                  "virtual_mcp_name"
+                                ]
+                              },
+                              {
+                                "required": [
+                                  "virtual_mcp_id"
+                                ]
+                              }
+                            ],
+                            "properties": {
+                              "virtual_mcp_name": {
+                                "type": "string",
+                                "description": "Name of the Virtual MCP. Resolved to the stored Virtual MCP on save; a name that matches none is refused."
+                              },
+                              "virtual_mcp_id": {
+                                "type": "integer",
+                                "format": "uint",
+                                "minimum": 1,
+                                "description": "Virtual MCP ID, as an alternative to virtual_mcp_name. Wins when both are set."
+                              }
+                            }
+                          }
+                        },
+                        "mcp_configs": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "description": "The tools of one MCP client the profile may execute.",
+                            "required": [
+                              "mcp_client_id"
+                            ],
+                            "properties": {
+                              "mcp_client_id": {
+                                "type": "string",
+                                "description": "MCP client ID or name. A name is resolved to the stored client id on save; a ref matching no client is kept as given."
+                              },
+                              "tools_to_execute": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                },
+                                "description": "[\"*\"] allows every tool including ones added later, [] allows none, and a named list allows only those tools."
+                              }
+                            }
+                          }
+                        },
+                        "mcp_tool_groups": {
+                          "deprecated": true,
+                          "description": "DEPRECATED: use virtual_mcps.",
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "deprecated": true,
+                            "description": "DEPRECATED: use AccessProfileVirtualMCPLink (virtual_mcps).",
                             "required": [
                               "tool_group_id"
                             ],
@@ -56159,6 +57078,8 @@
                           }
                         },
                         "mcp_servers": {
+                          "deprecated": true,
+                          "description": "DEPRECATED: use mcp_configs. Folded in on save.",
                           "type": "array",
                           "items": {
                             "type": "object",
@@ -56173,6 +57094,8 @@
                           }
                         },
                         "mcp_tool_overrides": {
+                          "deprecated": true,
+                          "description": "DEPRECATED: use mcp_configs. Folded in on save.",
                           "type": "array",
                           "items": {
                             "type": "object",
@@ -57884,7 +58807,7 @@
                                   "items": {
                                     "type": "string"
                                   },
-                                  "description": "Allowlist. `[\"*\"]` allows every model. A list may not mix `*` with named entries."
+                                  "description": "Allowlist. `[\"*\"]` allows every model. A list may not mix `*` with named entries. An entry starting with `regex:` is an RE2 pattern matched case-insensitively against the whole model name. An empty pattern, `regex:*`, or a pattern that does not compile is rejected with 400."
                                 },
                                 "blacklisted_models": {
                                   "type": "array",
@@ -57892,7 +58815,7 @@
                                   "items": {
                                     "type": "string"
                                   },
-                                  "description": "Denylist, which wins over the allowlist. `[\"*\"]` blocks everything."
+                                  "description": "Denylist, which wins over the allowlist. `[\"*\"]` blocks everything. An entry starting with `regex:` is an RE2 pattern matched case-insensitively against the whole model name. An empty pattern, `regex:*`, or a pattern that does not compile is rejected with 400."
                                 },
                                 "key_ids": {
                                   "type": "array",
@@ -58263,14 +59186,28 @@
                             "type": "array",
                             "items": {
                               "type": "object",
-                              "description": "A virtual MCP assigned to the project. A scoped request can reach each one at its `/mcp/<slug>` endpoint. Assignments are a set, so a repeated id is ignored rather than doubled, and the list is replaced wholesale on update rather than diffed.",
-                              "required": [
-                                "virtual_mcp_id"
+                              "description": "A Virtual MCP assigned to the project. A scoped request can reach each one at its `/mcp/<slug>` endpoint. Assignments are a set, so a repeat collapses rather than doubling, and the list is replaced wholesale on update rather than diffed.",
+                              "anyOf": [
+                                {
+                                  "required": [
+                                    "virtual_mcp_name"
+                                  ]
+                                },
+                                {
+                                  "required": [
+                                    "virtual_mcp_id"
+                                  ]
+                                }
                               ],
                               "properties": {
+                                "virtual_mcp_name": {
+                                  "type": "string",
+                                  "description": "Name of the Virtual MCP. Resolved to the stored Virtual MCP on save; a name that matches none is refused."
+                                },
                                 "virtual_mcp_id": {
                                   "type": "integer",
-                                  "minimum": 1
+                                  "minimum": 1,
+                                  "description": "Virtual MCP ID, as an alternative to virtual_mcp_name. Wins when both are set."
                                 }
                               },
                               "additionalProperties": false
@@ -58926,7 +59863,7 @@
                           "items": {
                             "type": "string"
                           },
-                          "description": "Allowlist. `[\"*\"]` allows every model. A list may not mix `*` with named entries."
+                          "description": "Allowlist. `[\"*\"]` allows every model. A list may not mix `*` with named entries. An entry starting with `regex:` is an RE2 pattern matched case-insensitively against the whole model name. An empty pattern, `regex:*`, or a pattern that does not compile is rejected with 400."
                         },
                         "blacklisted_models": {
                           "type": "array",
@@ -58934,7 +59871,7 @@
                           "items": {
                             "type": "string"
                           },
-                          "description": "Denylist, which wins over the allowlist. `[\"*\"]` blocks everything."
+                          "description": "Denylist, which wins over the allowlist. `[\"*\"]` blocks everything. An entry starting with `regex:` is an RE2 pattern matched case-insensitively against the whole model name. An empty pattern, `regex:*`, or a pattern that does not compile is rejected with 400."
                         },
                         "key_ids": {
                           "type": "array",
@@ -59305,14 +60242,28 @@
                     "type": "array",
                     "items": {
                       "type": "object",
-                      "description": "A virtual MCP assigned to the project. A scoped request can reach each one at its `/mcp/<slug>` endpoint. Assignments are a set, so a repeated id is ignored rather than doubled, and the list is replaced wholesale on update rather than diffed.",
-                      "required": [
-                        "virtual_mcp_id"
+                      "description": "A Virtual MCP assigned to the project. A scoped request can reach each one at its `/mcp/<slug>` endpoint. Assignments are a set, so a repeat collapses rather than doubling, and the list is replaced wholesale on update rather than diffed.",
+                      "anyOf": [
+                        {
+                          "required": [
+                            "virtual_mcp_name"
+                          ]
+                        },
+                        {
+                          "required": [
+                            "virtual_mcp_id"
+                          ]
+                        }
                       ],
                       "properties": {
+                        "virtual_mcp_name": {
+                          "type": "string",
+                          "description": "Name of the Virtual MCP. Resolved to the stored Virtual MCP on save; a name that matches none is refused."
+                        },
                         "virtual_mcp_id": {
                           "type": "integer",
-                          "minimum": 1
+                          "minimum": 1,
+                          "description": "Virtual MCP ID, as an alternative to virtual_mcp_name. Wins when both are set."
                         }
                       },
                       "additionalProperties": false
@@ -59585,7 +60536,7 @@
                                 "items": {
                                   "type": "string"
                                 },
-                                "description": "Allowlist. `[\"*\"]` allows every model. A list may not mix `*` with named entries."
+                                "description": "Allowlist. `[\"*\"]` allows every model. A list may not mix `*` with named entries. An entry starting with `regex:` is an RE2 pattern matched case-insensitively against the whole model name. An empty pattern, `regex:*`, or a pattern that does not compile is rejected with 400."
                               },
                               "blacklisted_models": {
                                 "type": "array",
@@ -59593,7 +60544,7 @@
                                 "items": {
                                   "type": "string"
                                 },
-                                "description": "Denylist, which wins over the allowlist. `[\"*\"]` blocks everything."
+                                "description": "Denylist, which wins over the allowlist. `[\"*\"]` blocks everything. An entry starting with `regex:` is an RE2 pattern matched case-insensitively against the whole model name. An empty pattern, `regex:*`, or a pattern that does not compile is rejected with 400."
                               },
                               "key_ids": {
                                 "type": "array",
@@ -59964,14 +60915,28 @@
                           "type": "array",
                           "items": {
                             "type": "object",
-                            "description": "A virtual MCP assigned to the project. A scoped request can reach each one at its `/mcp/<slug>` endpoint. Assignments are a set, so a repeated id is ignored rather than doubled, and the list is replaced wholesale on update rather than diffed.",
-                            "required": [
-                              "virtual_mcp_id"
+                            "description": "A Virtual MCP assigned to the project. A scoped request can reach each one at its `/mcp/<slug>` endpoint. Assignments are a set, so a repeat collapses rather than doubling, and the list is replaced wholesale on update rather than diffed.",
+                            "anyOf": [
+                              {
+                                "required": [
+                                  "virtual_mcp_name"
+                                ]
+                              },
+                              {
+                                "required": [
+                                  "virtual_mcp_id"
+                                ]
+                              }
                             ],
                             "properties": {
+                              "virtual_mcp_name": {
+                                "type": "string",
+                                "description": "Name of the Virtual MCP. Resolved to the stored Virtual MCP on save; a name that matches none is refused."
+                              },
                               "virtual_mcp_id": {
                                 "type": "integer",
-                                "minimum": 1
+                                "minimum": 1,
+                                "description": "Virtual MCP ID, as an alternative to virtual_mcp_name. Wins when both are set."
                               }
                             },
                             "additionalProperties": false
@@ -60639,7 +61604,7 @@
                                 "items": {
                                   "type": "string"
                                 },
-                                "description": "Allowlist. `[\"*\"]` allows every model. A list may not mix `*` with named entries."
+                                "description": "Allowlist. `[\"*\"]` allows every model. A list may not mix `*` with named entries. An entry starting with `regex:` is an RE2 pattern matched case-insensitively against the whole model name. An empty pattern, `regex:*`, or a pattern that does not compile is rejected with 400."
                               },
                               "blacklisted_models": {
                                 "type": "array",
@@ -60647,7 +61612,7 @@
                                 "items": {
                                   "type": "string"
                                 },
-                                "description": "Denylist, which wins over the allowlist. `[\"*\"]` blocks everything."
+                                "description": "Denylist, which wins over the allowlist. `[\"*\"]` blocks everything. An entry starting with `regex:` is an RE2 pattern matched case-insensitively against the whole model name. An empty pattern, `regex:*`, or a pattern that does not compile is rejected with 400."
                               },
                               "key_ids": {
                                 "type": "array",
@@ -61018,14 +61983,28 @@
                           "type": "array",
                           "items": {
                             "type": "object",
-                            "description": "A virtual MCP assigned to the project. A scoped request can reach each one at its `/mcp/<slug>` endpoint. Assignments are a set, so a repeated id is ignored rather than doubled, and the list is replaced wholesale on update rather than diffed.",
-                            "required": [
-                              "virtual_mcp_id"
+                            "description": "A Virtual MCP assigned to the project. A scoped request can reach each one at its `/mcp/<slug>` endpoint. Assignments are a set, so a repeat collapses rather than doubling, and the list is replaced wholesale on update rather than diffed.",
+                            "anyOf": [
+                              {
+                                "required": [
+                                  "virtual_mcp_name"
+                                ]
+                              },
+                              {
+                                "required": [
+                                  "virtual_mcp_id"
+                                ]
+                              }
                             ],
                             "properties": {
+                              "virtual_mcp_name": {
+                                "type": "string",
+                                "description": "Name of the Virtual MCP. Resolved to the stored Virtual MCP on save; a name that matches none is refused."
+                              },
                               "virtual_mcp_id": {
                                 "type": "integer",
-                                "minimum": 1
+                                "minimum": 1,
+                                "description": "Virtual MCP ID, as an alternative to virtual_mcp_name. Wins when both are set."
                               }
                             },
                             "additionalProperties": false
@@ -61679,7 +62658,7 @@
                           "items": {
                             "type": "string"
                           },
-                          "description": "Allowlist. `[\"*\"]` allows every model. A list may not mix `*` with named entries."
+                          "description": "Allowlist. `[\"*\"]` allows every model. A list may not mix `*` with named entries. An entry starting with `regex:` is an RE2 pattern matched case-insensitively against the whole model name. An empty pattern, `regex:*`, or a pattern that does not compile is rejected with 400."
                         },
                         "blacklisted_models": {
                           "type": "array",
@@ -61687,7 +62666,7 @@
                           "items": {
                             "type": "string"
                           },
-                          "description": "Denylist, which wins over the allowlist. `[\"*\"]` blocks everything."
+                          "description": "Denylist, which wins over the allowlist. `[\"*\"]` blocks everything. An entry starting with `regex:` is an RE2 pattern matched case-insensitively against the whole model name. An empty pattern, `regex:*`, or a pattern that does not compile is rejected with 400."
                         },
                         "key_ids": {
                           "type": "array",
@@ -62060,14 +63039,28 @@
                     "nullable": true,
                     "items": {
                       "type": "object",
-                      "description": "A virtual MCP assigned to the project. A scoped request can reach each one at its `/mcp/<slug>` endpoint. Assignments are a set, so a repeated id is ignored rather than doubled, and the list is replaced wholesale on update rather than diffed.",
-                      "required": [
-                        "virtual_mcp_id"
+                      "description": "A Virtual MCP assigned to the project. A scoped request can reach each one at its `/mcp/<slug>` endpoint. Assignments are a set, so a repeat collapses rather than doubling, and the list is replaced wholesale on update rather than diffed.",
+                      "anyOf": [
+                        {
+                          "required": [
+                            "virtual_mcp_name"
+                          ]
+                        },
+                        {
+                          "required": [
+                            "virtual_mcp_id"
+                          ]
+                        }
                       ],
                       "properties": {
+                        "virtual_mcp_name": {
+                          "type": "string",
+                          "description": "Name of the Virtual MCP. Resolved to the stored Virtual MCP on save; a name that matches none is refused."
+                        },
                         "virtual_mcp_id": {
                           "type": "integer",
-                          "minimum": 1
+                          "minimum": 1,
+                          "description": "Virtual MCP ID, as an alternative to virtual_mcp_name. Wins when both are set."
                         }
                       },
                       "additionalProperties": false
@@ -62344,7 +63337,7 @@
                                 "items": {
                                   "type": "string"
                                 },
-                                "description": "Allowlist. `[\"*\"]` allows every model. A list may not mix `*` with named entries."
+                                "description": "Allowlist. `[\"*\"]` allows every model. A list may not mix `*` with named entries. An entry starting with `regex:` is an RE2 pattern matched case-insensitively against the whole model name. An empty pattern, `regex:*`, or a pattern that does not compile is rejected with 400."
                               },
                               "blacklisted_models": {
                                 "type": "array",
@@ -62352,7 +63345,7 @@
                                 "items": {
                                   "type": "string"
                                 },
-                                "description": "Denylist, which wins over the allowlist. `[\"*\"]` blocks everything."
+                                "description": "Denylist, which wins over the allowlist. `[\"*\"]` blocks everything. An entry starting with `regex:` is an RE2 pattern matched case-insensitively against the whole model name. An empty pattern, `regex:*`, or a pattern that does not compile is rejected with 400."
                               },
                               "key_ids": {
                                 "type": "array",
@@ -62723,14 +63716,28 @@
                           "type": "array",
                           "items": {
                             "type": "object",
-                            "description": "A virtual MCP assigned to the project. A scoped request can reach each one at its `/mcp/<slug>` endpoint. Assignments are a set, so a repeated id is ignored rather than doubled, and the list is replaced wholesale on update rather than diffed.",
-                            "required": [
-                              "virtual_mcp_id"
+                            "description": "A Virtual MCP assigned to the project. A scoped request can reach each one at its `/mcp/<slug>` endpoint. Assignments are a set, so a repeat collapses rather than doubling, and the list is replaced wholesale on update rather than diffed.",
+                            "anyOf": [
+                              {
+                                "required": [
+                                  "virtual_mcp_name"
+                                ]
+                              },
+                              {
+                                "required": [
+                                  "virtual_mcp_id"
+                                ]
+                              }
                             ],
                             "properties": {
+                              "virtual_mcp_name": {
+                                "type": "string",
+                                "description": "Name of the Virtual MCP. Resolved to the stored Virtual MCP on save; a name that matches none is refused."
+                              },
                               "virtual_mcp_id": {
                                 "type": "integer",
-                                "minimum": 1
+                                "minimum": 1,
+                                "description": "Virtual MCP ID, as an alternative to virtual_mcp_name. Wins when both are set."
                               }
                             },
                             "additionalProperties": false
@@ -65075,7 +66082,7 @@
                                   "items": {
                                     "type": "string"
                                   },
-                                  "description": "Allowlist. `[\"*\"]` allows every model. A list may not mix `*` with named entries."
+                                  "description": "Allowlist. `[\"*\"]` allows every model. A list may not mix `*` with named entries. An entry starting with `regex:` is an RE2 pattern matched case-insensitively against the whole model name. An empty pattern, `regex:*`, or a pattern that does not compile is rejected with 400."
                                 },
                                 "blacklisted_models": {
                                   "type": "array",
@@ -65083,7 +66090,7 @@
                                   "items": {
                                     "type": "string"
                                   },
-                                  "description": "Denylist, which wins over the allowlist. `[\"*\"]` blocks everything."
+                                  "description": "Denylist, which wins over the allowlist. `[\"*\"]` blocks everything. An entry starting with `regex:` is an RE2 pattern matched case-insensitively against the whole model name. An empty pattern, `regex:*`, or a pattern that does not compile is rejected with 400."
                                 },
                                 "key_ids": {
                                   "type": "array",
@@ -65454,14 +66461,28 @@
                             "type": "array",
                             "items": {
                               "type": "object",
-                              "description": "A virtual MCP assigned to the project. A scoped request can reach each one at its `/mcp/<slug>` endpoint. Assignments are a set, so a repeated id is ignored rather than doubled, and the list is replaced wholesale on update rather than diffed.",
-                              "required": [
-                                "virtual_mcp_id"
+                              "description": "A Virtual MCP assigned to the project. A scoped request can reach each one at its `/mcp/<slug>` endpoint. Assignments are a set, so a repeat collapses rather than doubling, and the list is replaced wholesale on update rather than diffed.",
+                              "anyOf": [
+                                {
+                                  "required": [
+                                    "virtual_mcp_name"
+                                  ]
+                                },
+                                {
+                                  "required": [
+                                    "virtual_mcp_id"
+                                  ]
+                                }
                               ],
                               "properties": {
+                                "virtual_mcp_name": {
+                                  "type": "string",
+                                  "description": "Name of the Virtual MCP. Resolved to the stored Virtual MCP on save; a name that matches none is refused."
+                                },
                                 "virtual_mcp_id": {
                                   "type": "integer",
-                                  "minimum": 1
+                                  "minimum": 1,
+                                  "description": "Virtual MCP ID, as an alternative to virtual_mcp_name. Wins when both are set."
                                 }
                               },
                               "additionalProperties": false
@@ -70052,10 +71073,68 @@
                             ],
                             "description": "When the last scheduled rotation run finished."
                           },
-                          "mcp_tool_groups": {
+                          "virtual_mcps": {
                             "type": "array",
                             "items": {
                               "type": "object",
+                              "description": "A Virtual MCP granted to the profile. Assignments are a set, so a repeat collapses rather than doubling.",
+                              "anyOf": [
+                                {
+                                  "required": [
+                                    "virtual_mcp_name"
+                                  ]
+                                },
+                                {
+                                  "required": [
+                                    "virtual_mcp_id"
+                                  ]
+                                }
+                              ],
+                              "properties": {
+                                "virtual_mcp_name": {
+                                  "type": "string",
+                                  "description": "Name of the Virtual MCP. Resolved to the stored Virtual MCP on save; a name that matches none is refused."
+                                },
+                                "virtual_mcp_id": {
+                                  "type": "integer",
+                                  "format": "uint",
+                                  "minimum": 1,
+                                  "description": "Virtual MCP ID, as an alternative to virtual_mcp_name. Wins when both are set."
+                                }
+                              }
+                            }
+                          },
+                          "mcp_configs": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "description": "The tools of one MCP client the profile may execute.",
+                              "required": [
+                                "mcp_client_id"
+                              ],
+                              "properties": {
+                                "mcp_client_id": {
+                                  "type": "string",
+                                  "description": "MCP client ID or name. A name is resolved to the stored client id on save; a ref matching no client is kept as given."
+                                },
+                                "tools_to_execute": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string"
+                                  },
+                                  "description": "[\"*\"] allows every tool including ones added later, [] allows none, and a named list allows only those tools."
+                                }
+                              }
+                            }
+                          },
+                          "mcp_tool_groups": {
+                            "deprecated": true,
+                            "description": "DEPRECATED: use virtual_mcps.",
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "deprecated": true,
+                              "description": "DEPRECATED: use AccessProfileVirtualMCPLink (virtual_mcps).",
                               "required": [
                                 "tool_group_id"
                               ],
@@ -70068,6 +71147,8 @@
                             }
                           },
                           "mcp_servers": {
+                            "deprecated": true,
+                            "description": "DEPRECATED: use mcp_configs. Folded in on save.",
                             "type": "array",
                             "items": {
                               "type": "object",
@@ -70082,6 +71163,8 @@
                             }
                           },
                           "mcp_tool_overrides": {
+                            "deprecated": true,
+                            "description": "DEPRECATED: use mcp_configs. Folded in on save.",
                             "type": "array",
                             "items": {
                               "type": "object",
@@ -70467,10 +71550,68 @@
                     "format": "date-time",
                     "description": "Optional first rotation time; must be in the future and requires auto_rotation_interval. Defaults to now + interval."
                   },
-                  "mcp_tool_groups": {
+                  "virtual_mcps": {
                     "type": "array",
                     "items": {
                       "type": "object",
+                      "description": "A Virtual MCP granted to the profile. Assignments are a set, so a repeat collapses rather than doubling.",
+                      "anyOf": [
+                        {
+                          "required": [
+                            "virtual_mcp_name"
+                          ]
+                        },
+                        {
+                          "required": [
+                            "virtual_mcp_id"
+                          ]
+                        }
+                      ],
+                      "properties": {
+                        "virtual_mcp_name": {
+                          "type": "string",
+                          "description": "Name of the Virtual MCP. Resolved to the stored Virtual MCP on save; a name that matches none is refused."
+                        },
+                        "virtual_mcp_id": {
+                          "type": "integer",
+                          "format": "uint",
+                          "minimum": 1,
+                          "description": "Virtual MCP ID, as an alternative to virtual_mcp_name. Wins when both are set."
+                        }
+                      }
+                    }
+                  },
+                  "mcp_configs": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "description": "The tools of one MCP client the profile may execute.",
+                      "required": [
+                        "mcp_client_id"
+                      ],
+                      "properties": {
+                        "mcp_client_id": {
+                          "type": "string",
+                          "description": "MCP client ID or name. A name is resolved to the stored client id on save; a ref matching no client is kept as given."
+                        },
+                        "tools_to_execute": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          },
+                          "description": "[\"*\"] allows every tool including ones added later, [] allows none, and a named list allows only those tools."
+                        }
+                      }
+                    }
+                  },
+                  "mcp_tool_groups": {
+                    "deprecated": true,
+                    "description": "DEPRECATED: use virtual_mcps.",
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "deprecated": true,
+                      "description": "DEPRECATED: use AccessProfileVirtualMCPLink (virtual_mcps).",
                       "required": [
                         "tool_group_id"
                       ],
@@ -70483,6 +71624,8 @@
                     }
                   },
                   "mcp_servers": {
+                    "deprecated": true,
+                    "description": "DEPRECATED: use mcp_configs. Folded in on save.",
                     "type": "array",
                     "items": {
                       "type": "object",
@@ -70497,6 +71640,8 @@
                     }
                   },
                   "mcp_tool_overrides": {
+                    "deprecated": true,
+                    "description": "DEPRECATED: use mcp_configs. Folded in on save.",
                     "type": "array",
                     "items": {
                       "type": "object",
@@ -70846,10 +71991,68 @@
                           ],
                           "description": "When the last scheduled rotation run finished."
                         },
-                        "mcp_tool_groups": {
+                        "virtual_mcps": {
                           "type": "array",
                           "items": {
                             "type": "object",
+                            "description": "A Virtual MCP granted to the profile. Assignments are a set, so a repeat collapses rather than doubling.",
+                            "anyOf": [
+                              {
+                                "required": [
+                                  "virtual_mcp_name"
+                                ]
+                              },
+                              {
+                                "required": [
+                                  "virtual_mcp_id"
+                                ]
+                              }
+                            ],
+                            "properties": {
+                              "virtual_mcp_name": {
+                                "type": "string",
+                                "description": "Name of the Virtual MCP. Resolved to the stored Virtual MCP on save; a name that matches none is refused."
+                              },
+                              "virtual_mcp_id": {
+                                "type": "integer",
+                                "format": "uint",
+                                "minimum": 1,
+                                "description": "Virtual MCP ID, as an alternative to virtual_mcp_name. Wins when both are set."
+                              }
+                            }
+                          }
+                        },
+                        "mcp_configs": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "description": "The tools of one MCP client the profile may execute.",
+                            "required": [
+                              "mcp_client_id"
+                            ],
+                            "properties": {
+                              "mcp_client_id": {
+                                "type": "string",
+                                "description": "MCP client ID or name. A name is resolved to the stored client id on save; a ref matching no client is kept as given."
+                              },
+                              "tools_to_execute": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                },
+                                "description": "[\"*\"] allows every tool including ones added later, [] allows none, and a named list allows only those tools."
+                              }
+                            }
+                          }
+                        },
+                        "mcp_tool_groups": {
+                          "deprecated": true,
+                          "description": "DEPRECATED: use virtual_mcps.",
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "deprecated": true,
+                            "description": "DEPRECATED: use AccessProfileVirtualMCPLink (virtual_mcps).",
                             "required": [
                               "tool_group_id"
                             ],
@@ -70862,6 +72065,8 @@
                           }
                         },
                         "mcp_servers": {
+                          "deprecated": true,
+                          "description": "DEPRECATED: use mcp_configs. Folded in on save.",
                           "type": "array",
                           "items": {
                             "type": "object",
@@ -70876,6 +72081,8 @@
                           }
                         },
                         "mcp_tool_overrides": {
+                          "deprecated": true,
+                          "description": "DEPRECATED: use mcp_configs. Folded in on save.",
                           "type": "array",
                           "items": {
                             "type": "object",
@@ -71289,10 +72496,68 @@
                           ],
                           "description": "When the last scheduled rotation run finished."
                         },
-                        "mcp_tool_groups": {
+                        "virtual_mcps": {
                           "type": "array",
                           "items": {
                             "type": "object",
+                            "description": "A Virtual MCP granted to the profile. Assignments are a set, so a repeat collapses rather than doubling.",
+                            "anyOf": [
+                              {
+                                "required": [
+                                  "virtual_mcp_name"
+                                ]
+                              },
+                              {
+                                "required": [
+                                  "virtual_mcp_id"
+                                ]
+                              }
+                            ],
+                            "properties": {
+                              "virtual_mcp_name": {
+                                "type": "string",
+                                "description": "Name of the Virtual MCP. Resolved to the stored Virtual MCP on save; a name that matches none is refused."
+                              },
+                              "virtual_mcp_id": {
+                                "type": "integer",
+                                "format": "uint",
+                                "minimum": 1,
+                                "description": "Virtual MCP ID, as an alternative to virtual_mcp_name. Wins when both are set."
+                              }
+                            }
+                          }
+                        },
+                        "mcp_configs": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "description": "The tools of one MCP client the profile may execute.",
+                            "required": [
+                              "mcp_client_id"
+                            ],
+                            "properties": {
+                              "mcp_client_id": {
+                                "type": "string",
+                                "description": "MCP client ID or name. A name is resolved to the stored client id on save; a ref matching no client is kept as given."
+                              },
+                              "tools_to_execute": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                },
+                                "description": "[\"*\"] allows every tool including ones added later, [] allows none, and a named list allows only those tools."
+                              }
+                            }
+                          }
+                        },
+                        "mcp_tool_groups": {
+                          "deprecated": true,
+                          "description": "DEPRECATED: use virtual_mcps.",
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "deprecated": true,
+                            "description": "DEPRECATED: use AccessProfileVirtualMCPLink (virtual_mcps).",
                             "required": [
                               "tool_group_id"
                             ],
@@ -71305,6 +72570,8 @@
                           }
                         },
                         "mcp_servers": {
+                          "deprecated": true,
+                          "description": "DEPRECATED: use mcp_configs. Folded in on save.",
                           "type": "array",
                           "items": {
                             "type": "object",
@@ -71319,6 +72586,8 @@
                           }
                         },
                         "mcp_tool_overrides": {
+                          "deprecated": true,
+                          "description": "DEPRECATED: use mcp_configs. Folded in on save.",
                           "type": "array",
                           "items": {
                             "type": "object",
@@ -71748,10 +73017,68 @@
                     ],
                     "description": "Override the next rotation time (must be in the future). null clears it, which is only valid when the interval is off. Omit to keep the existing schedule; a changed interval re-anchors it to now + interval."
                   },
-                  "mcp_tool_groups": {
+                  "virtual_mcps": {
                     "type": "array",
                     "items": {
                       "type": "object",
+                      "description": "A Virtual MCP granted to the profile. Assignments are a set, so a repeat collapses rather than doubling.",
+                      "anyOf": [
+                        {
+                          "required": [
+                            "virtual_mcp_name"
+                          ]
+                        },
+                        {
+                          "required": [
+                            "virtual_mcp_id"
+                          ]
+                        }
+                      ],
+                      "properties": {
+                        "virtual_mcp_name": {
+                          "type": "string",
+                          "description": "Name of the Virtual MCP. Resolved to the stored Virtual MCP on save; a name that matches none is refused."
+                        },
+                        "virtual_mcp_id": {
+                          "type": "integer",
+                          "format": "uint",
+                          "minimum": 1,
+                          "description": "Virtual MCP ID, as an alternative to virtual_mcp_name. Wins when both are set."
+                        }
+                      }
+                    }
+                  },
+                  "mcp_configs": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "description": "The tools of one MCP client the profile may execute.",
+                      "required": [
+                        "mcp_client_id"
+                      ],
+                      "properties": {
+                        "mcp_client_id": {
+                          "type": "string",
+                          "description": "MCP client ID or name. A name is resolved to the stored client id on save; a ref matching no client is kept as given."
+                        },
+                        "tools_to_execute": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          },
+                          "description": "[\"*\"] allows every tool including ones added later, [] allows none, and a named list allows only those tools."
+                        }
+                      }
+                    }
+                  },
+                  "mcp_tool_groups": {
+                    "deprecated": true,
+                    "description": "DEPRECATED: use virtual_mcps.",
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "deprecated": true,
+                      "description": "DEPRECATED: use AccessProfileVirtualMCPLink (virtual_mcps).",
                       "required": [
                         "tool_group_id"
                       ],
@@ -71764,6 +73091,8 @@
                     }
                   },
                   "mcp_servers": {
+                    "deprecated": true,
+                    "description": "DEPRECATED: use mcp_configs. Folded in on save.",
                     "type": "array",
                     "items": {
                       "type": "object",
@@ -71778,6 +73107,8 @@
                     }
                   },
                   "mcp_tool_overrides": {
+                    "deprecated": true,
+                    "description": "DEPRECATED: use mcp_configs. Folded in on save.",
                     "type": "array",
                     "items": {
                       "type": "object",
@@ -72127,10 +73458,68 @@
                           ],
                           "description": "When the last scheduled rotation run finished."
                         },
-                        "mcp_tool_groups": {
+                        "virtual_mcps": {
                           "type": "array",
                           "items": {
                             "type": "object",
+                            "description": "A Virtual MCP granted to the profile. Assignments are a set, so a repeat collapses rather than doubling.",
+                            "anyOf": [
+                              {
+                                "required": [
+                                  "virtual_mcp_name"
+                                ]
+                              },
+                              {
+                                "required": [
+                                  "virtual_mcp_id"
+                                ]
+                              }
+                            ],
+                            "properties": {
+                              "virtual_mcp_name": {
+                                "type": "string",
+                                "description": "Name of the Virtual MCP. Resolved to the stored Virtual MCP on save; a name that matches none is refused."
+                              },
+                              "virtual_mcp_id": {
+                                "type": "integer",
+                                "format": "uint",
+                                "minimum": 1,
+                                "description": "Virtual MCP ID, as an alternative to virtual_mcp_name. Wins when both are set."
+                              }
+                            }
+                          }
+                        },
+                        "mcp_configs": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "description": "The tools of one MCP client the profile may execute.",
+                            "required": [
+                              "mcp_client_id"
+                            ],
+                            "properties": {
+                              "mcp_client_id": {
+                                "type": "string",
+                                "description": "MCP client ID or name. A name is resolved to the stored client id on save; a ref matching no client is kept as given."
+                              },
+                              "tools_to_execute": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                },
+                                "description": "[\"*\"] allows every tool including ones added later, [] allows none, and a named list allows only those tools."
+                              }
+                            }
+                          }
+                        },
+                        "mcp_tool_groups": {
+                          "deprecated": true,
+                          "description": "DEPRECATED: use virtual_mcps.",
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "deprecated": true,
+                            "description": "DEPRECATED: use AccessProfileVirtualMCPLink (virtual_mcps).",
                             "required": [
                               "tool_group_id"
                             ],
@@ -72143,6 +73532,8 @@
                           }
                         },
                         "mcp_servers": {
+                          "deprecated": true,
+                          "description": "DEPRECATED: use mcp_configs. Folded in on save.",
                           "type": "array",
                           "items": {
                             "type": "object",
@@ -72157,6 +73548,8 @@
                           }
                         },
                         "mcp_tool_overrides": {
+                          "deprecated": true,
+                          "description": "DEPRECATED: use mcp_configs. Folded in on save.",
                           "type": "array",
                           "items": {
                             "type": "object",
@@ -72640,10 +74033,68 @@
                           ],
                           "description": "When the last scheduled rotation run finished."
                         },
-                        "mcp_tool_groups": {
+                        "virtual_mcps": {
                           "type": "array",
                           "items": {
                             "type": "object",
+                            "description": "A Virtual MCP granted to the profile. Assignments are a set, so a repeat collapses rather than doubling.",
+                            "anyOf": [
+                              {
+                                "required": [
+                                  "virtual_mcp_name"
+                                ]
+                              },
+                              {
+                                "required": [
+                                  "virtual_mcp_id"
+                                ]
+                              }
+                            ],
+                            "properties": {
+                              "virtual_mcp_name": {
+                                "type": "string",
+                                "description": "Name of the Virtual MCP. Resolved to the stored Virtual MCP on save; a name that matches none is refused."
+                              },
+                              "virtual_mcp_id": {
+                                "type": "integer",
+                                "format": "uint",
+                                "minimum": 1,
+                                "description": "Virtual MCP ID, as an alternative to virtual_mcp_name. Wins when both are set."
+                              }
+                            }
+                          }
+                        },
+                        "mcp_configs": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "description": "The tools of one MCP client the profile may execute.",
+                            "required": [
+                              "mcp_client_id"
+                            ],
+                            "properties": {
+                              "mcp_client_id": {
+                                "type": "string",
+                                "description": "MCP client ID or name. A name is resolved to the stored client id on save; a ref matching no client is kept as given."
+                              },
+                              "tools_to_execute": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                },
+                                "description": "[\"*\"] allows every tool including ones added later, [] allows none, and a named list allows only those tools."
+                              }
+                            }
+                          }
+                        },
+                        "mcp_tool_groups": {
+                          "deprecated": true,
+                          "description": "DEPRECATED: use virtual_mcps.",
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "deprecated": true,
+                            "description": "DEPRECATED: use AccessProfileVirtualMCPLink (virtual_mcps).",
                             "required": [
                               "tool_group_id"
                             ],
@@ -72656,6 +74107,8 @@
                           }
                         },
                         "mcp_servers": {
+                          "deprecated": true,
+                          "description": "DEPRECATED: use mcp_configs. Folded in on save.",
                           "type": "array",
                           "items": {
                             "type": "object",
@@ -72670,6 +74123,8 @@
                           }
                         },
                         "mcp_tool_overrides": {
+                          "deprecated": true,
+                          "description": "DEPRECATED: use mcp_configs. Folded in on save.",
                           "type": "array",
                           "items": {
                             "type": "object",
@@ -73072,10 +74527,68 @@
                           ],
                           "description": "When the last scheduled rotation run finished."
                         },
-                        "mcp_tool_groups": {
+                        "virtual_mcps": {
                           "type": "array",
                           "items": {
                             "type": "object",
+                            "description": "A Virtual MCP granted to the profile. Assignments are a set, so a repeat collapses rather than doubling.",
+                            "anyOf": [
+                              {
+                                "required": [
+                                  "virtual_mcp_name"
+                                ]
+                              },
+                              {
+                                "required": [
+                                  "virtual_mcp_id"
+                                ]
+                              }
+                            ],
+                            "properties": {
+                              "virtual_mcp_name": {
+                                "type": "string",
+                                "description": "Name of the Virtual MCP. Resolved to the stored Virtual MCP on save; a name that matches none is refused."
+                              },
+                              "virtual_mcp_id": {
+                                "type": "integer",
+                                "format": "uint",
+                                "minimum": 1,
+                                "description": "Virtual MCP ID, as an alternative to virtual_mcp_name. Wins when both are set."
+                              }
+                            }
+                          }
+                        },
+                        "mcp_configs": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "description": "The tools of one MCP client the profile may execute.",
+                            "required": [
+                              "mcp_client_id"
+                            ],
+                            "properties": {
+                              "mcp_client_id": {
+                                "type": "string",
+                                "description": "MCP client ID or name. A name is resolved to the stored client id on save; a ref matching no client is kept as given."
+                              },
+                              "tools_to_execute": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                },
+                                "description": "[\"*\"] allows every tool including ones added later, [] allows none, and a named list allows only those tools."
+                              }
+                            }
+                          }
+                        },
+                        "mcp_tool_groups": {
+                          "deprecated": true,
+                          "description": "DEPRECATED: use virtual_mcps.",
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "deprecated": true,
+                            "description": "DEPRECATED: use AccessProfileVirtualMCPLink (virtual_mcps).",
                             "required": [
                               "tool_group_id"
                             ],
@@ -73088,6 +74601,8 @@
                           }
                         },
                         "mcp_servers": {
+                          "deprecated": true,
+                          "description": "DEPRECATED: use mcp_configs. Folded in on save.",
                           "type": "array",
                           "items": {
                             "type": "object",
@@ -73102,6 +74617,8 @@
                           }
                         },
                         "mcp_tool_overrides": {
+                          "deprecated": true,
+                          "description": "DEPRECATED: use mcp_configs. Folded in on save.",
                           "type": "array",
                           "items": {
                             "type": "object",
@@ -73525,10 +75042,68 @@
                           ],
                           "description": "When the last scheduled rotation run finished."
                         },
-                        "mcp_tool_groups": {
+                        "virtual_mcps": {
                           "type": "array",
                           "items": {
                             "type": "object",
+                            "description": "A Virtual MCP granted to the profile. Assignments are a set, so a repeat collapses rather than doubling.",
+                            "anyOf": [
+                              {
+                                "required": [
+                                  "virtual_mcp_name"
+                                ]
+                              },
+                              {
+                                "required": [
+                                  "virtual_mcp_id"
+                                ]
+                              }
+                            ],
+                            "properties": {
+                              "virtual_mcp_name": {
+                                "type": "string",
+                                "description": "Name of the Virtual MCP. Resolved to the stored Virtual MCP on save; a name that matches none is refused."
+                              },
+                              "virtual_mcp_id": {
+                                "type": "integer",
+                                "format": "uint",
+                                "minimum": 1,
+                                "description": "Virtual MCP ID, as an alternative to virtual_mcp_name. Wins when both are set."
+                              }
+                            }
+                          }
+                        },
+                        "mcp_configs": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "description": "The tools of one MCP client the profile may execute.",
+                            "required": [
+                              "mcp_client_id"
+                            ],
+                            "properties": {
+                              "mcp_client_id": {
+                                "type": "string",
+                                "description": "MCP client ID or name. A name is resolved to the stored client id on save; a ref matching no client is kept as given."
+                              },
+                              "tools_to_execute": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                },
+                                "description": "[\"*\"] allows every tool including ones added later, [] allows none, and a named list allows only those tools."
+                              }
+                            }
+                          }
+                        },
+                        "mcp_tool_groups": {
+                          "deprecated": true,
+                          "description": "DEPRECATED: use virtual_mcps.",
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "deprecated": true,
+                            "description": "DEPRECATED: use AccessProfileVirtualMCPLink (virtual_mcps).",
                             "required": [
                               "tool_group_id"
                             ],
@@ -73541,6 +75116,8 @@
                           }
                         },
                         "mcp_servers": {
+                          "deprecated": true,
+                          "description": "DEPRECATED: use mcp_configs. Folded in on save.",
                           "type": "array",
                           "items": {
                             "type": "object",
@@ -73555,6 +75132,8 @@
                           }
                         },
                         "mcp_tool_overrides": {
+                          "deprecated": true,
+                          "description": "DEPRECATED: use mcp_configs. Folded in on save.",
                           "type": "array",
                           "items": {
                             "type": "object",
@@ -95746,6 +97325,10 @@
           },
           "request_type": {
             "type": "string"
+          },
+          "error_type": {
+            "type": "string",
+            "description": "Normalized, low-cardinality classification of why the request failed, declared by whichever component refused it. Prefixed by fault domain (caller_, policy_, provider_, bifrost_). Absent on failures that were not classified at source."
           }
         }
       },
@@ -99949,6 +101532,180 @@
           },
           "document": {
             "$ref": "#/components/schemas/RerankDocument"
+          }
+        }
+      },
+      "DecisionRequest": {
+        "type": "object",
+        "required": [
+          "model",
+          "state",
+          "questions"
+        ],
+        "properties": {
+          "model": {
+            "type": "string",
+            "description": "Model in provider/model format",
+            "example": "typesafe/jev-1.13.0"
+          },
+          "state": {
+            "description": "State to evaluate. A plain string, or structured data (object or array).",
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "object",
+                "additionalProperties": true
+              },
+              {
+                "type": "array",
+                "items": {}
+              }
+            ]
+          },
+          "questions": {
+            "type": "object",
+            "minProperties": 1,
+            "description": "Map of named questions. Question identifiers become answer field names.",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/DecisionQuestion"
+            }
+          },
+          "fallbacks": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Fallback models in provider/model format"
+          }
+        }
+      },
+      "DecisionResponse": {
+        "type": "object",
+        "required": [
+          "model",
+          "answers"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Unique identifier for the decision response"
+          },
+          "model": {
+            "type": "string",
+            "description": "Model that performed the decision"
+          },
+          "answers": {
+            "type": "object",
+            "description": "Map matching question identifiers to answers. Every requested question produces an answer.",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/DecisionAnswer"
+            }
+          },
+          "usage": {
+            "$ref": "#/components/schemas/BifrostLLMUsage"
+          },
+          "extra_fields": {
+            "$ref": "#/components/schemas/BifrostResponseExtraFields"
+          }
+        }
+      },
+      "DecisionQuestion": {
+        "type": "object",
+        "required": [
+          "kind",
+          "instructions"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "noul",
+              "choice",
+              "score"
+            ],
+            "description": "How the question is decided. `noul` yields a probability between 0 and 1, `choice` yields one option from the criteria, `score` yields a numeric rubric score including fractions."
+          },
+          "instructions": {
+            "description": "Instructions for this question. A string, or structured data preserved losslessly.",
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "object",
+                "additionalProperties": true
+              },
+              {
+                "type": "array",
+                "items": {}
+              }
+            ]
+          },
+          "criteria": {
+            "description": "Applicable criteria. Optional `true`/`false` descriptions for `noul`; a\nrequired map of option to description for `choice` (at most 255 options);\na required ordered array of 2-10 level descriptions for `score`.\n",
+            "oneOf": [
+              {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "DecisionAnswer": {
+        "type": "object",
+        "required": [
+          "kind",
+          "value"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "noul",
+              "choice",
+              "score"
+            ],
+            "description": "The question's decision kind"
+          },
+          "value": {
+            "description": "The decided value. A number in [0,1] for `noul`, an option string for `choice`, a numeric rubric score for `score`.",
+            "oneOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "confidence": {
+            "type": "number",
+            "description": "Model confidence for this answer, when supplied"
+          },
+          "probabilities": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "number"
+            },
+            "description": "Probability distribution over options or levels, when supplied"
+          },
+          "legend": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Legend mapping levels to descriptions, when supplied"
           }
         }
       },
@@ -105591,6 +107348,28 @@
                 "description": "End offset of the video"
               }
             }
+          },
+          "mediaResolution": {
+            "type": "object",
+            "description": "Per-part media resolution, overriding generationConfig.mediaResolution for this part alone. Supported on Gemini 3 and later; MEDIA_RESOLUTION_ULTRA_HIGH is image-only.",
+            "properties": {
+              "level": {
+                "type": "string",
+                "enum": [
+                  "MEDIA_RESOLUTION_UNSPECIFIED",
+                  "MEDIA_RESOLUTION_LOW",
+                  "MEDIA_RESOLUTION_MEDIUM",
+                  "MEDIA_RESOLUTION_HIGH",
+                  "MEDIA_RESOLUTION_ULTRA_HIGH"
+                ],
+                "description": "The tokenization quality used for the given media"
+              },
+              "numTokens": {
+                "type": "integer",
+                "format": "int32",
+                "description": "Required sequence length for media tokenization (Gemini API only)"
+              }
+            }
           }
         }
       },
@@ -108644,14 +110423,14 @@
             "items": {
               "type": "string"
             },
-            "description": "List of models this key can access (whitelist)"
+            "description": "List of models this key can access (whitelist). `[\"*\"]` allows every model. An entry starting with `regex:` is an RE2 pattern matched case-insensitively against the whole model name; an empty pattern, `regex:*`, or a pattern that does not compile is rejected with 400. `blacklisted_models` wins over this list."
           },
           "blacklisted_models": {
             "type": "array",
             "items": {
               "type": "string"
             },
-            "description": "List of models this key cannot access (blacklist)"
+            "description": "List of models this key cannot access (blacklist), which wins over `models`. `[\"*\"]` blocks every model. An entry starting with `regex:` is an RE2 pattern matched case-insensitively against the whole model name; an empty pattern, `regex:*`, or a pattern that does not compile is rejected with 400."
           },
           "weight": {
             "type": "number",
@@ -110525,6 +112304,30 @@
           "rate_limit": {
             "$ref": "#/components/schemas/RateLimit"
           },
+          "assigned_user": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "readOnly": true,
+            "description": "The user this virtual key is assigned to, or null when it is assigned to a team, a customer, or nothing. Read-only and resolved per request. Enterprise only; always null in the open-source build, which has no user directory. Omitted entirely when the assignee lookup could not be completed, so null always means \"nobody is assigned\" and an absent field means \"not known\" - clients should refetch the assignee for the key rather than reading its absence as unassigned.\n",
+            "required": [
+              "id",
+              "name",
+              "email"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "email": {
+                "type": "string"
+              }
+            }
+          },
           "config_hash": {
             "type": "string"
           },
@@ -110592,13 +112395,15 @@
             "type": "array",
             "items": {
               "type": "string"
-            }
+            },
+            "description": "Allowlist. `[\"*\"]` allows every model. An entry starting with `regex:` is an RE2 pattern matched case-insensitively against the whole model name. An empty pattern, `regex:*`, or a pattern that does not compile is rejected with 400."
           },
           "blacklisted_models": {
             "type": "array",
             "items": {
               "type": "string"
-            }
+            },
+            "description": "Denylist, which wins over the allowlist. `[\"*\"]` blocks every model. An entry starting with `regex:` is an RE2 pattern matched case-insensitively against the whole model name. An empty pattern, `regex:*`, or a pattern that does not compile is rejected with 400."
           },
           "allow_all_keys": {
             "type": "boolean"
@@ -110914,13 +112719,15 @@
                   "type": "array",
                   "items": {
                     "type": "string"
-                  }
+                  },
+                  "description": "Allowlist. `[\"*\"]` allows every model. An entry starting with `regex:` is an RE2 pattern matched case-insensitively against the whole model name. An empty pattern, `regex:*`, or a pattern that does not compile is rejected with 400."
                 },
                 "blacklisted_models": {
                   "type": "array",
                   "items": {
                     "type": "string"
-                  }
+                  },
+                  "description": "Denylist, which wins over the allowlist. `[\"*\"]` blocks every model. An entry starting with `regex:` is an RE2 pattern matched case-insensitively against the whole model name. An empty pattern, `regex:*`, or a pattern that does not compile is rejected with 400."
                 },
                 "budgets": {
                   "type": "array",
@@ -111055,13 +112862,15 @@
                   "type": "array",
                   "items": {
                     "type": "string"
-                  }
+                  },
+                  "description": "Allowlist. `[\"*\"]` allows every model. An entry starting with `regex:` is an RE2 pattern matched case-insensitively against the whole model name. An empty pattern, `regex:*`, or a pattern that does not compile is rejected with 400."
                 },
                 "blacklisted_models": {
                   "type": "array",
                   "items": {
                     "type": "string"
-                  }
+                  },
+                  "description": "Denylist, which wins over the allowlist. `[\"*\"]` blocks every model. An entry starting with `regex:` is an RE2 pattern matched case-insensitively against the whole model name. An empty pattern, `regex:*`, or a pattern that does not compile is rejected with 400."
                 },
                 "budgets": {
                   "type": "array",
@@ -113371,6 +115180,70 @@
           "annotation_cost_per_page": {
             "type": "number",
             "minimum": 0
+          },
+          "off_peak_cost_multiplier": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "maximum": 1,
+            "description": "Multiplier applied to every usage-based charge when the request falls outside the windows declared in peak_hours. Every other rate on this object is the peak (higher) price, so this can only scale downward — e.g. 0.5 for a 50% off-peak discount. Flat per-request and per-query fees are not discounted. A discount applies only when the RESOLVED pricing row carries both this field and peak_hours. A patch may supply one and inherit the other from the model's datasheet entry, so setting this alone still discounts when the datasheet already declares a schedule; it bills at peak only when neither source provides one.\n"
+          },
+          "peak_hours": {
+            "type": "object",
+            "description": "Recurring weekly windows during which the model is billed at its peak (base) rates. Any instant outside every window is off-peak and is discounted by off_peak_cost_multiplier. Peak vs off-peak is decided by the request's start time, so a stream crossing a boundary bills entirely at its start-time rate.\n",
+            "properties": {
+              "timezone": {
+                "type": "string",
+                "description": "IANA location name (e.g. \"UTC\", \"Asia/Shanghai\"). Empty means UTC.",
+                "example": "UTC"
+              },
+              "windows": {
+                "type": "array",
+                "description": "At least one window is required. A schedule with no usable window cannot be evaluated, and an unevaluable schedule bills at peak, so an empty list would silently discard the discount rather than make every instant off-peak.\n",
+                "minItems": 1,
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "days": {
+                      "type": "array",
+                      "description": "Weekdays the window applies to, 0 = Sunday through 6 = Saturday. For a window that wraps past midnight, this is the weekday the window starts on. At least one is required, for the same reason windows itself is.\n",
+                      "minItems": 1,
+                      "items": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 6
+                      },
+                      "example": [
+                        1,
+                        2,
+                        3,
+                        4,
+                        5
+                      ]
+                    },
+                    "start": {
+                      "type": "string",
+                      "description": "Window start as \"HH:MM\" in the schedule's timezone (inclusive).",
+                      "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$",
+                      "example": "01:00"
+                    },
+                    "end": {
+                      "type": "string",
+                      "description": "Window end as \"HH:MM\" in the schedule's timezone (exclusive). A value less than or equal to start wraps past midnight. \"24:00\" is accepted as an end-of-day marker.\n",
+                      "pattern": "^(([01][0-9]|2[0-3]):[0-5][0-9]|24:00)$",
+                      "example": "04:00"
+                    }
+                  },
+                  "required": [
+                    "days",
+                    "start",
+                    "end"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "windows"
+            ]
           }
         }
       },

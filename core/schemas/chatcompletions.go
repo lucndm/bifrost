@@ -1639,6 +1639,16 @@ func (cm *ChatAssistantMessage) UnmarshalJSON(data []byte) error {
 		cm.Reasoning = aux.ReasoningContent
 	}
 
+	// DeepSeek-shaped upstreams (ModelScope) keep sending empty reasoning fields
+	// on every content-phase frame once thinking has ended. Folding "" into a
+	// non-nil Reasoning made MarshalJSON re-emit it under both spellings and
+	// synthesize an empty details entry below, which reasoning-aware clients
+	// render as a fresh thinking block per chunk (#7294). Empty means absent.
+	cm.ReasoningDetails = pruneEmptyReasoningDetails(cm.ReasoningDetails)
+	if cm.Reasoning != nil && *cm.Reasoning == "" {
+		cm.Reasoning = nil
+	}
+
 	// If Reasoning is present and there are no reasoning_details,
 	// synthesize a text reasoning_details entry.
 	if cm.Reasoning != nil && len(cm.ReasoningDetails) == 0 {
@@ -1653,6 +1663,37 @@ func (cm *ChatAssistantMessage) UnmarshalJSON(data []byte) error {
 	}
 
 	return nil
+}
+
+// pruneEmptyReasoningDetails drops reasoning detail entries that carry no
+// payload at all: no text, summary, signature, or data. An entry with empty
+// text but a signature (or summary/data) is payload, not noise, and survives.
+// Returns the input slice untouched when nothing prunes; nil when nothing
+// survives, so len()==0 checks and omitempty both see absence (#7294).
+func pruneEmptyReasoningDetails(details []ChatReasoningDetails) []ChatReasoningDetails {
+	isEmpty := func(d ChatReasoningDetails) bool {
+		return (d.Text == nil || *d.Text == "") && d.Summary == nil && d.Signature == nil && d.Data == nil
+	}
+	needsPrune := false
+	for _, d := range details {
+		if isEmpty(d) {
+			needsPrune = true
+			break
+		}
+	}
+	if !needsPrune {
+		return details
+	}
+	kept := make([]ChatReasoningDetails, 0, len(details))
+	for _, d := range details {
+		if !isEmpty(d) {
+			kept = append(kept, d)
+		}
+	}
+	if len(kept) == 0 {
+		return nil
+	}
+	return kept
 }
 
 // ChatAssistantMessageAnnotation represents an annotation in a response.
@@ -1840,6 +1881,15 @@ func (d *ChatStreamResponseChoiceDelta) UnmarshalJSON(data []byte) error {
 		d.Reasoning = aux.ReasoningContent
 	}
 
+	// Same normalization as ChatAssistantMessage.UnmarshalJSON above: an empty
+	// reasoning string on a content-phase delta is upstream noise, and
+	// re-emitting it (plus a synthesized empty details entry) opened a fresh
+	// thinking block per chunk in reasoning-aware clients (#7294).
+	d.ReasoningDetails = pruneEmptyReasoningDetails(d.ReasoningDetails)
+	if d.Reasoning != nil && *d.Reasoning == "" {
+		d.Reasoning = nil
+	}
+
 	// If Reasoning is present and there are no reasoning_details,
 	// synthesize a text reasoning_details entry.
 	if d.Reasoning != nil && len(d.ReasoningDetails) == 0 {
@@ -1878,6 +1928,9 @@ type BifrostLLMUsage struct {
 	CompletionTokens        int                          `json:"completion_tokens,omitempty"`
 	CompletionTokensDetails *ChatCompletionTokensDetails `json:"completion_tokens_details,omitempty"`
 	TotalTokens             int                          `json:"total_tokens"`
+	// AudioSeconds carries duration-based audio usage when a provider reports
+	// seconds instead of tokens.
+	AudioSeconds *float64 `json:"audio_seconds,omitempty"`
 	// SearchUnits is the billable unit for rerank: Cohere and Bedrock both define one unit as
 	// a single query against up to 100 document chunks, so a request over that many chunks
 	// bills as several. Distinct from ChatCompletionTokensDetails.NumSearchQueries, which
