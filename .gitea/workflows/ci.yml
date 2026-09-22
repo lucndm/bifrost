@@ -1,0 +1,140 @@
+name: CI (verify + release + deploy)
+
+# Pipeline kiểu bugsink: verify -> publish image (registry LAN) -> smoke ->
+# bump digest trong k8s manifest (Flux deploy) -> notify-failure.
+# Verify gọi reusable workflow dùng chung minhluc-info/ci; gate riêng ở
+# .ci/verify.sh.
+on:
+  push:
+    branches: [dev]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-dev
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  issues: write
+
+env:
+  REGISTRY: 192.168.100.180:30305
+  IMAGE: 192.168.100.180:30305/mirror/bifrost
+  MANIFEST: k8s/infrastructure/bifrost/deployment.yaml
+
+jobs:
+  verify:
+    uses: minhluc-info/ci/.gitea/workflows/verify.yml@main
+    with:
+      verify_script: .ci/verify.sh
+      setup_go: "1.27.0"
+
+  publish:
+    runs-on: docker
+    needs: [verify]
+    outputs:
+      digest: ${{ steps.push.outputs.digest }}
+      tag: ${{ steps.meta.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Meta
+        id: meta
+        run: echo "tag=${GITHUB_SHA::8}" >> "$GITHUB_OUTPUT"
+
+      - name: Login registry LAN
+        env:
+          REGISTRY_USER: ${{ secrets.REGISTRY_USER }}
+          REGISTRY_TOKEN: ${{ secrets.COMPOSE_REPO_TOKEN }}
+        run: |
+          if [ -z "$REGISTRY_TOKEN" ]; then
+            echo "thiếu secret COMPOSE_REPO_TOKEN (PAT có quyền write:package)"
+            exit 1
+          fi
+          echo "$REGISTRY_TOKEN" | docker login "$REGISTRY" -u "$REGISTRY_USER" --password-stdin
+
+      - name: Build (buildx, cache trên registry LAN)
+        env:
+          TAG: ${{ steps.meta.outputs.tag }}
+        run: |
+          # cache type=registry cần docker-container driver; buildkitd phải được
+          # nói PLAIN HTTP cho registry LAN (không kế thừa --insecure-registry của dind)
+          mkdir -p /tmp/bk
+          printf '[registry."%s"]\n  http = true\n  insecure = true\n' "$REGISTRY" > /tmp/bk/buildkitd.toml
+          docker buildx rm bk 2>/dev/null || true
+          docker buildx create --use --name bk --driver docker-container --buildkitd-config /tmp/bk/buildkitd.toml
+          docker buildx build --builder bk \
+            --cache-from type=registry,ref=$IMAGE:buildcache \
+            --cache-to type=registry,mode=max,ref=$IMAGE:buildcache \
+            -f transports/Dockerfile.fork \
+            --build-arg VERSION="$TAG" \
+            -t "$IMAGE:$TAG" -t "$IMAGE:latest" \
+            --load .
+
+      - name: Smoke — server boot
+        env:
+          TAG: ${{ steps.meta.outputs.tag }}
+        run: |
+          # 1-shot: chạy server, chờ log "successfully started bifrost" rồi dọn.
+          # Chỉ dùng docker API + log (không curl) để tránh vấn đề network
+          # namespace giữa job container và dind.
+          CID=$(docker run -d --name bifrost-smoke "$IMAGE:$TAG")
+          ok=0
+          for i in $(seq 1 60); do
+            if docker logs bifrost-smoke 2>&1 | grep -q "successfully started bifrost"; then
+              ok=1
+              break
+            fi
+            [ "$(docker inspect -f '{{.State.Running}}' bifrost-smoke 2>/dev/null)" = "true" ] || break
+            sleep 1
+          done
+          docker logs --tail 30 bifrost-smoke 2>&1 || true
+          docker rm -f bifrost-smoke >/dev/null 2>&1 || true
+          [ "$ok" = "1" ] && echo "SMOKE-OK" || { echo "SMOKE FAIL"; exit 1; }
+
+      - name: Push image
+        id: push
+        env:
+          TAG: ${{ steps.meta.outputs.tag }}
+        run: |
+          docker push "$IMAGE:$TAG"
+          docker push "$IMAGE:latest"
+          DIGEST=$(docker image inspect --format '{{index .RepoDigests 0}}' "$IMAGE:$TAG" | cut -d'@' -f2)
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+
+  bump-manifest:
+    runs-on: docker
+    needs: [publish]
+    steps:
+      - name: Bump digest in k8s manifest (Flux deploys it)
+        env:
+          COMPOSE_REPO_TOKEN: ${{ secrets.COMPOSE_REPO_TOKEN }}
+          DIGEST: ${{ needs.publish.outputs.digest }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          # clone qua NodePort LAN (30305) — git.minhluc.info public HTTPS bị Cloudflare Access chặn
+          git clone --depth 1 "http://oauth2:${COMPOSE_REPO_TOKEN}@192.168.100.180:30305/minhluc-info/docker-compose.git" compose
+          cd compose
+          # delimiter # vì pattern không chứa #; khớp mọi dạng image cũ của bifrost
+          # (ghcr.io/lucndm/bifrost:tag, registry LAN:tag, hoặc digest)
+          sed -i -E "s#image: (git\.minhluc\.info|192\.168\.100\.180:30305|ghcr\.io)/[A-Za-z0-9._/-]*bifrost[:@][A-Za-z0-9._@:-]+#image: 192.168.100.180:30305/mirror/bifrost@$DIGEST#" "$MANIFEST"
+          if git diff --quiet; then
+            echo "Digest unchanged; nothing to do."
+            exit 0
+          fi
+          git config user.name "bifrost-ci"
+          git config user.email "bifrost-ci@minhluc.info"
+          git add "$MANIFEST"
+          git commit -m "bifrost: auto-bump image digest (CI ${COMMIT_SHA::8})"
+          git push
+
+  notify-failure:
+    runs-on: docker
+    needs: [verify, publish, bump-manifest]
+    if: failure()
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.gitea/actions/notify-bugsink
+        with:
+          dsn: ${{ secrets.BUGSINK_DSN }}
+          message: "Bifrost CI/release failed — xem log ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_number }}"

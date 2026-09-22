@@ -1,0 +1,32 @@
+name: 'Notify Bugsink'
+description: 'Send a CI failure event to Bugsink (inhouse). Groups into one issue per repo via fingerprint.'
+inputs:
+  dsn:
+    description: 'Bugsink ingest DSN'
+    required: true
+  message:
+    description: 'Event message'
+    required: false
+    default: 'CI pipeline failed'
+  level:
+    description: 'Event level'
+    required: false
+    default: 'error'
+runs:
+  using: 'composite'
+  steps:
+    - shell: bash
+      env:
+        SENTRY_DSN: ${{ inputs.dsn }}
+        SENTRY_ENVIRONMENT: ci
+        SENTRY_RELEASE: ${{ github.sha }}
+      run: |
+        # --break-system-packages: runner image dam dau PEP 668 (externally-managed)
+        pip install --quiet --break-system-packages sentry-cli
+        sentry-cli send-event \
+          --level "${{ inputs.level }}" \
+          --fingerprint "ci-${{ github.repository }}" \
+          -m "${{ inputs.message }}" \
+          -m "repo: ${{ github.repository }}" \
+          -m "run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_number }}" \
+          -m "commit: ${{ github.sha }}"
