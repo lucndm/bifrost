@@ -1,0 +1,118 @@
+name: Sync upstream-dev into dev
+
+# Nguồn upstream: nhánh `upstream-dev` NGAY TRONG repo này (bot đồng bộ từ
+# upstream và strip .github/workflows). Không gọi domain/Internet để fetch.
+# Chỉ push `dev` — KHÔNG BAO GIỜ push bất kỳ nhánh `upstream-*` nào.
+#
+# Merge conflict hoặc gate build/test fail => job fail + mở issue, không tự
+# resolve. Lần sync sau sẽ bắt đầu lại từ dev hiện tại.
+
+on:
+  schedule:
+    - cron: "0 20 * * *" # 03:00 Asia/Ho_Chi_Minh (UTC+7)
+  workflow_dispatch:
+
+concurrency:
+  group: sync-upstream
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  sync:
+    runs-on: docker
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout dev
+        uses: actions/checkout@v4
+        with:
+          ref: dev
+          fetch-depth: 0
+
+      - name: Cấu hình git
+        run: |
+          git config user.name "gitea-actions[bot]"
+          git config user.email "gitea-actions@noreply.local"
+
+      - name: Fetch upstream-dev
+        id: upstream
+        run: |
+          git fetch origin upstream-dev
+          echo "sha=$(git rev-parse FETCH_HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Đã up-to-date?
+        id: check
+        run: |
+          if git merge-base --is-ancestor "${{ steps.upstream.outputs.sha }}" HEAD; then
+            echo "up_to_date=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "up_to_date=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Merge upstream-dev
+        if: steps.check.outputs.up_to_date == 'false'
+        run: git merge --no-edit "${{ steps.upstream.outputs.sha }}"
+
+      - name: Setup Go
+        if: steps.check.outputs.up_to_date == 'false'
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.27.0"
+
+      - name: Gate — build + test trước khi push
+        if: steps.check.outputs.up_to_date == 'false'
+        run: |
+          set -euo pipefail
+          bash ./.gitea/scripts/gen-gowork.sh
+          mkdir -p transports/bifrost-http/ui
+          [ -n "$(ls -A transports/bifrost-http/ui)" ] || echo placeholder > transports/bifrost-http/ui/.gitkeep
+          for m in $(go list -m -f '{{if .Main}}{{.Dir}}{{end}}' all | grep .); do
+            echo "== build $m"
+            go -C "$m" build ./...
+          done
+          for p in adaptive guardrails quotatracker tokensaver; do
+            echo "== test plugins/$p"
+            go -C "plugins/$p" test ./...
+          done
+          echo "== test transports"
+          go -C transports test ./...
+
+      - name: Push dev
+        if: steps.check.outputs.up_to_date == 'false'
+        run: git push origin HEAD:dev
+
+      - name: Không cần sync
+        if: steps.check.outputs.up_to_date == 'true'
+        run: echo "dev đã chứa upstream-dev — không cần merge."
+
+      - name: Mở issue khi thất bại
+        if: failure()
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SERVER: ${{ github.server_url }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          python3 - > /tmp/issue.json <<'PY'
+          import json
+          body = """Workflow `sync-upstream` thất bại — nhiều khả năng do merge conflict hoặc gate build/test không qua.
+
+          Xử lý thủ công:
+          ```bash
+          git fetch origin
+          git switch dev
+          git merge origin/upstream-dev
+          # resolve conflict -> commit -> build/test -> push
+          ```
+          """
+          print(json.dumps({"title": "sync upstream-dev -> dev thất bại", "body": body}))
+          PY
+          curl -sS -X POST \
+            -H "Authorization: token ${TOKEN}" \
+            -H "Content-Type: application/json" \
+            --data @/tmp/issue.json \
+            "${SERVER}/api/v1/repos/${REPO}/issues" > /dev/null
