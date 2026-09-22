@@ -64,12 +64,11 @@ jobs:
       - name: npm ci
         working-directory: ui
         run: npm ci
-      - name: Typecheck
+      # `npm run build` = vite build (sinh ui/app/routeTree.gen.ts — file bị
+      # gitignore nên checkout mới không có) -> typecheck -> copy-build.
+      - name: Build UI
         working-directory: ui
-        run: npx tsc --noEmit
-      - name: Vite build
-        working-directory: ui
-        run: npx vite build
+        run: npm run build
 
   pin-check:
     runs-on: docker
