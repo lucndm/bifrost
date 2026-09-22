@@ -754,6 +754,35 @@ Systematically address unresolved PR review comments. Uses GraphQL to get unreso
 
 ---
 
+## Fork CI/CD (Gitea Actions) — sync upstream + release/deploy
+
+Fork chạy CI/CD trên **Gitea Actions** (runner K8s, label `docker`), không phải GitHub Actions.
+Logic dùng chung nằm ở repo **`minhluc-info/ci`** (reusable workflows); repo này chỉ giữ trigger + gate.
+
+### Hai pipeline (`.gitea/workflows/`)
+- `sync-upstream.yml` — cron 03:00 VN + dispatch: merge `upstream-dev` vào `dev`, chạy gate
+  `.ci/verify.sh`, rồi push. Conflict/gate fail ⇒ job fail + **tự mở issue** kèm hướng dẫn merge tay.
+- `ci.yml` — mọi push vào `dev`: `verify` (reusable verify, gate `.ci/verify.sh`) → `publish`
+  (build `transports/Dockerfile.fork`, cache registry LAN, smoke boot server, push
+  `192.168.100.180:30305/mirror/bifrost` `:sha8` + `:latest`) → `bump-manifest` (bump digest vào
+  `k8s/infrastructure/bifrost/deployment.yaml` của repo `minhluc-info/docker-compose`; Flux deploy)
+  → `notify-failure` (event vào Bugsink, project `ci/bifrost`).
+
+### Quy tắc bắt buộc
+- **CI fork nằm `.gitea/workflows/`** — bot sync xoá `.github/workflows/*` trên nhánh `upstream-dev`;
+  Gitea Actions đọc CẢ hai thư mục.
+- **Workflow chỉ push `dev`** — không bao giờ push bất kỳ nhánh `upstream-*`.
+- **Pin `plugins/otel` trong `transports/Dockerfile.fork` khớp `transports/go.mod`** (bump cả hai cùng
+  lúc) — `pin-check` trong gate fail nếu lệch. otel là bản fork-patch (quota gauges, `SetQuotaSource`).
+- Build local cần `go.work` (gitignored, `replace` có version cho plugin chưa publish) — script
+  `./.gitea/scripts/gen-gowork.sh` sinh tự động, CI dùng chính script này.
+
+### Sự cố & rollback
+- Deploy hỏng → revert commit bump trong `minhluc-info/docker-compose` (Flux deploy lại digest cũ).
+- Release/sync hỏng → issue tự động + event Bugsink. Debug CI: xem skill `/sync-upstream`.
+
+---
+
 ## Key Files Quick Reference
 
 | What | Where |
