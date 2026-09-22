@@ -38,7 +38,7 @@ COPY plugins/quotatracker/go.mod plugins/quotatracker/go.sum ./plugins/quotatrac
 COPY plugins/tokensaver/go.mod plugins/tokensaver/go.sum ./plugins/tokensaver/
 COPY transports/go.mod transports/go.sum ./transports/
 
-RUN printf 'go 1.27.0\n\nuse (\n\t./core\n\t./framework\n\t./plugins/adaptive\n\t./plugins/guardrails\n\t./plugins/otel\n\t./plugins/quotatracker\n\t./plugins/tokensaver\n\t./transports\n)\n\nreplace github.com/maximhq/bifrost/plugins/adaptive v0.1.0 => ./plugins/adaptive\nreplace github.com/maximhq/bifrost/plugins/guardrails v0.1.0 => ./plugins/guardrails\nreplace github.com/maximhq/bifrost/plugins/otel v1.5.2 => ./plugins/otel\nreplace github.com/maximhq/bifrost/plugins/quotatracker v0.1.0 => ./plugins/quotatracker\nreplace github.com/maximhq/bifrost/plugins/tokensaver v0.1.0 => ./plugins/tokensaver\n' > go.work
+RUN printf 'go 1.27.0\n\nuse (\n\t./core\n\t./framework\n\t./plugins/adaptive\n\t./plugins/guardrails\n\t./plugins/otel\n\t./plugins/quotatracker\n\t./plugins/tokensaver\n\t./transports\n)\n\nreplace github.com/maximhq/bifrost/plugins/adaptive v0.1.0 => ./plugins/adaptive\nreplace github.com/maximhq/bifrost/plugins/guardrails v0.1.0 => ./plugins/guardrails\nreplace github.com/maximhq/bifrost/plugins/otel v1.5.4 => ./plugins/otel\nreplace github.com/maximhq/bifrost/plugins/quotatracker v0.1.0 => ./plugins/quotatracker\nreplace github.com/maximhq/bifrost/plugins/tokensaver v0.1.0 => ./plugins/tokensaver\n' > go.work
 
 RUN go -C core mod download && \
   go -C framework mod download && \
@@ -49,7 +49,7 @@ RUN go -C core mod download && \
   go -C plugins/tokensaver mod download && \
   go -C transports mod edit -replace=github.com/maximhq/bifrost/plugins/adaptive@v0.1.0=../plugins/adaptive && \
   go -C transports mod edit -replace=github.com/maximhq/bifrost/plugins/guardrails@v0.1.0=../plugins/guardrails && \
-  go -C transports mod edit -replace=github.com/maximhq/bifrost/plugins/otel@v1.5.2=../plugins/otel && \
+  go -C transports mod edit -replace=github.com/maximhq/bifrost/plugins/otel@v1.5.4=../plugins/otel && \
   go -C transports mod edit -replace=github.com/maximhq/bifrost/plugins/quotatracker@v0.1.0=../plugins/quotatracker && \
   go -C transports mod edit -replace=github.com/maximhq/bifrost/plugins/tokensaver@v0.1.0=../plugins/tokensaver && \
   go -C transports mod download && \
