@@ -1,9 +1,6 @@
 name: Verify dev
 
-# Chạy khi dev thay đổi (push) hoặc bấm tay. Gate tối thiểu: mọi module Go
-# build được, plugin fork pass test, transports pass test, UI build được, và
-# pin trong Dockerfile.fork khớp transports/go.mod.
-
+# Logic nằm ở repo dùng chung minhluc-info/ci; gate riêng ở .ci/verify.sh.
 on:
   push:
     branches: [dev]
@@ -17,84 +14,8 @@ permissions:
   contents: read
 
 jobs:
-  go:
-    runs-on: docker
-    defaults:
-      run:
-        shell: bash
-    steps:
-      - uses: actions/checkout@v4
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: "1.27.0"
-      - name: Sinh go.work + placeholder UI
-        run: |
-          set -euo pipefail
-          bash ./.gitea/scripts/gen-gowork.sh
-          mkdir -p transports/bifrost-http/ui
-          [ -n "$(ls -A transports/bifrost-http/ui)" ] || echo placeholder > transports/bifrost-http/ui/.gitkeep
-      - name: Build mọi module
-        run: |
-          set -euo pipefail
-          for m in $(go list -m -f '{{if .Main}}{{.Dir}}{{end}}' all | grep .); do
-            echo "== build $m"
-            go -C "$m" build ./...
-          done
-      - name: Test plugin fork
-        run: |
-          set -euo pipefail
-          for p in adaptive guardrails quotatracker tokensaver; do
-            echo "== test plugins/$p"
-            go -C "plugins/$p" test ./...
-          done
-      - name: Test transports
-        run: go -C transports test ./...
-
-  ui:
-    runs-on: docker
-    defaults:
-      run:
-        shell: bash
-    steps:
-      - uses: actions/checkout@v4
-      # Image runner đã có Node 24 + npm, không cần setup-node.
-      - name: Kiểm tra Node
-        run: node --version && npm --version
-      - name: npm ci
-        working-directory: ui
-        run: npm ci
-      # `npm run build` = vite build (sinh ui/app/routeTree.gen.ts — file bị
-      # gitignore nên checkout mới không có) -> typecheck -> copy-build.
-      - name: Build UI
-        working-directory: ui
-        run: npm run build
-
-  pin-check:
-    runs-on: docker
-    defaults:
-      run:
-        shell: bash
-    steps:
-      - uses: actions/checkout@v4
-      - name: Dockerfile.fork pins khớp transports/go.mod
-        run: |
-          set -euo pipefail
-          fail=0
-          for mod in otel; do
-            want=$(sed -n "s/^[[:space:]]*github.com\/maximhq\/bifrost\/plugins\/${mod} \(v[^ ]*\)$/\1/p" transports/go.mod | head -1)
-            if [ -z "$want" ]; then
-              echo "không tìm thấy plugins/${mod} trong transports/go.mod"
-              fail=1
-              continue
-            fi
-            grep -q "plugins/${mod} ${want} => ./plugins/${mod}" transports/Dockerfile.fork || {
-              echo "MISMATCH go.work replace: plugins/${mod} (go.mod=${want})"
-              fail=1
-            }
-            grep -q "plugins/${mod}@${want}=" transports/Dockerfile.fork || {
-              echo "MISMATCH mod edit -replace: plugins/${mod} (go.mod=${want})"
-              fail=1
-            }
-          done
-          exit "$fail"
+  verify:
+    uses: minhluc-info/ci/.gitea/workflows/verify.yml@main
+    with:
+      verify_script: .ci/verify.sh
+      setup_go: "1.27.0"
