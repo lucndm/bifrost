@@ -314,6 +314,7 @@ func (c *ClientConnectionChecker) checkLiveConnection(conn *client.Client, clien
 		}, ProbeRetryConfig, c.logger)
 		if pingErr != nil {
 			c.recordFailure(clientName, schemas.MCPConnectionFailureStagePing, pingErr, connGeneration)
+			c.reconnectIfSessionExpired(pingErr, clientName)
 			return false
 		}
 	}
@@ -329,12 +330,39 @@ func (c *ClientConnectionChecker) checkLiveConnection(conn *client.Client, clien
 	}, ProbeRetryConfig, c.logger)
 	if listErr != nil {
 		c.recordFailure(clientName, schemas.MCPConnectionFailureStageListTools, listErr, connGeneration)
+		c.reconnectIfSessionExpired(listErr, clientName)
 		return false
 	}
 
 	c.writeBackTools(connGeneration, newTools, newMapping)
 	c.recordSuccess(clientName, connGeneration)
 	return true
+}
+
+// reconnectIfSessionExpired triggers a background reconnect when a checker
+// probe failed because the upstream MCP session this connection held has
+// expired (the server's idle TTL sweep removed it, or the server restarted).
+//
+// Without traffic the per-request recovery (attemptSessionExpiryRecovery)
+// never runs, and a bare probe failure only marks the client Unstable — the
+// checker would keep probing a connection whose session id the mcp-go
+// transport already cleared (after the first 404) forever, since the
+// checker's own reconnect path fires only for a nil connection. One
+// background reconnect re-establishes the session (fresh initialize) so the
+// next probe succeeds on its own. Repeated triggers while a reconnect is
+// still in flight are deduped by ReconnectClient's exclusive-op guard, and
+// the generation guard on every state write keeps a probe that snapshotted
+// the old connection from clobbering the swapped-in one.
+func (c *ClientConnectionChecker) reconnectIfSessionExpired(probeErr error, clientName string) {
+	if !isUpstreamSessionExpiredError(probeErr) {
+		return
+	}
+	c.logger.Debug("%s Connection check for %s hit an expired upstream MCP session; triggering a background reconnect", MCPLogPrefix, clientName)
+	go func() {
+		if err := c.manager.ReconnectClient(c.clientID); err != nil {
+			c.logger.Debug("%s Session-expiry reconnect for %s did not complete: %v", MCPLogPrefix, clientName, err)
+		}
+	}()
 }
 
 // checkPerCall runs the per-call/ephemeral discovery cycle for auth types

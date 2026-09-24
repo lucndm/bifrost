@@ -6,15 +6,21 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/client/transport"
 	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/mark3labs/mcp-go/server"
 	"github.com/maximhq/bifrost/core/schemas"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // =============================================================================
@@ -981,4 +987,381 @@ func TestExecuteTool_NonAuthFailure_NeverTriggersRetryLogic(t *testing.T) {
 	if got := cm.reconnectCalls.Load(); got != 0 {
 		t.Errorf("ReconnectClient must not run for a non-auth failure, got %d calls", got)
 	}
+}
+
+// =============================================================================
+// Upstream MCP session expiry recovery (isUpstreamSessionExpiredError +
+// attemptSessionExpiryRecovery). The upstream's idle TTL sweep (or a restart)
+// removes the session Bifrost's persistent connection holds; Bifrost must
+// re-initialize (fresh initialize → new upstream session) and replay the
+// call when the tool's annotations permit — instead of surfacing the
+// expiry forever (see the handoff: 2026-09-24-bifrost-mcp-stale-session-reinit).
+// =============================================================================
+
+func TestIsUpstreamSessionExpiredError(t *testing.T) {
+	wrappedSentinel := transport.NewError(fmt.Errorf("failed to send request: %w", transport.ErrSessionTerminated))
+	tt := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"nil", nil, false},
+		{"sentinel direct", transport.ErrSessionTerminated, true},
+		{"sentinel wrapped through transport.Error + fmt", wrappedSentinel, true},
+		{"gitnexus 404 body", errors.New("Session not found. Re-initialize."), true},
+		{"gitnexus 400 body", errors.New("First request must be initialize. No session ID provided."), true},
+		{"mark3labs stateful 400", errors.New("request failed with status 400: Invalid session ID"), true},
+		{"TS SDK variant", errors.New("Bad Request: mcp-session-id header is required"), true},
+		{"generic TTL wording", errors.New("session expired on server"), true},
+		{"auth rejection", errors.New("tool call failed: 401 Unauthorized"), false},
+		{"network blip", errors.New("connection reset by peer"), false},
+		{"tool business error", errors.New("user with id 42 not found"), false},
+		{"empty", errors.New(""), false},
+	}
+	for _, tc := range tt {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, isUpstreamSessionExpiredError(tc.err), "error: %v", tc.err)
+		})
+	}
+}
+
+func TestExecuteTool_SessionExpiry_Shared_HealsAndReplays(t *testing.T) {
+	// Explicit idempotent hint: retry-safety fails closed on missing
+	// annotations, so the heal-and-replay mechanics test needs an explicitly
+	// safe tool to reach the replay at all.
+	state, toolName := newAuthRetryClientState("sessexp", "dotool", nil, boolPtr(true))
+
+	ft := &fakeCallToolTransport{callErrs: []error{
+		fmt.Errorf("failed to send request: %w", transport.ErrSessionTerminated),
+	}}
+	conn := client.NewClient(ft, client.WithSession())
+
+	cm := &authRetryClientManager{state: state, acquireConn: conn}
+	cs := &authRetryCredStore{requiresPerCall: false}
+	tm := newAuthRetryToolsManager(cm, cs)
+
+	ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
+	req := newAuthRetryToolCallRequest(toolName)
+
+	resp, err := tm.ExecuteTool(ctx, req, conn, state.ExecutionConfig, state.ToolNameMapping)
+	if err != nil {
+		t.Fatalf("expected the replay after the reconnect to succeed, got error: %v", err)
+	}
+	if resp == nil || resp.ChatMessage == nil {
+		t.Fatalf("expected a populated chat message response, got %+v", resp)
+	}
+	if got := ft.CallCount(); got != 2 {
+		t.Errorf("expected 2 CallTool invocations (original + exactly 1 replay), got %d", got)
+	}
+	if got := cm.reconnectCalls.Load(); got != 1 {
+		t.Errorf("expected ReconnectClient to run exactly once, got %d", got)
+	}
+	if got := cm.acquireCalls.Load(); got != 1 {
+		t.Errorf("expected AcquireClientConn to run exactly once for the replay, got %d", got)
+	}
+}
+
+func TestExecuteTool_SessionExpiry_Shared_400SessionText_HealsAndReplays(t *testing.T) {
+	// The 400 phrasing is the sticky failure state observed live: after the
+	// transport cleared the dead session id (first 404), every later call
+	// goes out header-less and the upstream answers "First request must be
+	// initialize. No session ID provided." The text classifier must catch it.
+	state, toolName := newAuthRetryClientState("sessexp400", "dotool", nil, boolPtr(true))
+
+	ft := &fakeCallToolTransport{callErrs: []error{errors.New("First request must be initialize. No session ID provided.")}}
+	conn := client.NewClient(ft, client.WithSession())
+
+	cm := &authRetryClientManager{state: state, acquireConn: conn}
+	cs := &authRetryCredStore{requiresPerCall: false}
+	tm := newAuthRetryToolsManager(cm, cs)
+
+	ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
+	req := newAuthRetryToolCallRequest(toolName)
+
+	resp, err := tm.ExecuteTool(ctx, req, conn, state.ExecutionConfig, state.ToolNameMapping)
+	if err != nil {
+		t.Fatalf("expected the replay after the reconnect to succeed, got error: %v", err)
+	}
+	if resp == nil || resp.ChatMessage == nil {
+		t.Fatalf("expected a populated chat message response, got %+v", resp)
+	}
+	if got := ft.CallCount(); got != 2 {
+		t.Errorf("expected 2 CallTool invocations (original + exactly 1 replay), got %d", got)
+	}
+	if got := cm.reconnectCalls.Load(); got != 1 {
+		t.Errorf("expected ReconnectClient to run exactly once, got %d", got)
+	}
+}
+
+func TestExecuteTool_SessionExpiry_Shared_DestructiveNonIdempotent_HealsWithoutReplay(t *testing.T) {
+	// Destructive, non-idempotent tool (fails closed on missing hints too):
+	// the session-expiry failure must still heal the connection (background
+	// reconnect runs) but must NOT auto-replay the call — the original error
+	// surfaces and the next client call succeeds on the healed connection.
+	destructive := true
+	state, toolName := newAuthRetryClientState("sessexp", "mutate", &destructive, nil)
+
+	ft := &fakeCallToolTransport{callErrs: []error{
+		fmt.Errorf("failed to send request: %w", transport.ErrSessionTerminated),
+	}}
+	conn := client.NewClient(ft, client.WithSession())
+
+	reconnectSignal := make(chan struct{}, 1)
+	cm := &authRetryClientManager{state: state, acquireConn: conn, reconnectSignal: reconnectSignal}
+	cs := &authRetryCredStore{requiresPerCall: false}
+	tm := newAuthRetryToolsManager(cm, cs)
+
+	ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
+	req := newAuthRetryToolCallRequest(toolName)
+
+	_, err := tm.ExecuteTool(ctx, req, conn, state.ExecutionConfig, state.ToolNameMapping)
+	if err == nil {
+		t.Fatal("expected the original session-expiry failure to surface when the replay is opted out")
+	}
+	if !strings.Contains(err.Error(), "session terminated") {
+		t.Errorf("expected the original session-expiry error text to surface, got: %v", err)
+	}
+	if got := ft.CallCount(); got != 1 {
+		t.Errorf("expected exactly 1 CallTool invocation (no replay for a destructive tool), got %d", got)
+	}
+
+	// The heal must still happen — reconnect runs even though the replay is
+	// suppressed, so the next call succeeds on the fresh session.
+	select {
+	case <-reconnectSignal:
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected the background reconnect to trigger even when the replay is opted out")
+	}
+	if got := cm.reconnectCalls.Load(); got != 1 {
+		t.Errorf("expected ReconnectClient to run exactly once (heal), got %d", got)
+	}
+}
+
+func TestExecuteTool_SessionExpiry_Shared_PerCall_SurfacesOriginalError(t *testing.T) {
+	// Per-call connections establish a fresh initialized session per call;
+	// a session-expiry classification there must NOT heal-and-replay — the
+	// original error surfaces.
+	state, toolName := newAuthRetryClientState("sessexp", "dotool", nil, boolPtr(true))
+
+	ft := &fakeCallToolTransport{callErrs: []error{
+		fmt.Errorf("failed to send request: %w", transport.ErrSessionTerminated),
+	}}
+	conn := client.NewClient(ft, client.WithSession())
+
+	cm := &authRetryClientManager{state: state, acquireConn: conn}
+	cs := &authRetryCredStore{requiresPerCall: true}
+	tm := newAuthRetryToolsManager(cm, cs)
+
+	ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
+	req := newAuthRetryToolCallRequest(toolName)
+
+	_, err := tm.ExecuteTool(ctx, req, conn, state.ExecutionConfig, state.ToolNameMapping)
+	if err == nil {
+		t.Fatal("expected the session-expiry error to surface for a per-call client")
+	}
+	if got := ft.CallCount(); got != 1 {
+		t.Errorf("expected exactly 1 CallTool invocation for a per-call client, got %d", got)
+	}
+	if got := cm.reconnectCalls.Load(); got != 0 {
+		t.Errorf("per-call clients must not trigger ReconnectClient, got %d calls", got)
+	}
+}
+
+func TestExecuteTool_SessionExpiry_Shared_ReconnectFails_OriginalErrorSurfaces(t *testing.T) {
+	state, toolName := newAuthRetryClientState("sessexp", "dotool", nil, boolPtr(true))
+
+	ft := &fakeCallToolTransport{callErrs: []error{
+		fmt.Errorf("failed to send request: %w", transport.ErrSessionTerminated),
+	}}
+	conn := client.NewClient(ft, client.WithSession())
+
+	cm := &authRetryClientManager{state: state, acquireConn: conn, reconnectErr: errors.New("upstream is down")}
+	cs := &authRetryCredStore{requiresPerCall: false}
+	tm := newAuthRetryToolsManager(cm, cs)
+
+	ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
+	req := newAuthRetryToolCallRequest(toolName)
+
+	_, err := tm.ExecuteTool(ctx, req, conn, state.ExecutionConfig, state.ToolNameMapping)
+	if err == nil {
+		t.Fatal("expected the original session-expiry failure to surface when the reconnect fails")
+	}
+	if got := ft.CallCount(); got != 1 {
+		t.Errorf("expected exactly 1 CallTool invocation (no replay on failed reconnect), got %d", got)
+	}
+	if got := cm.reconnectCalls.Load(); got != 1 {
+		t.Errorf("expected ReconnectClient to run exactly once, got %d", got)
+	}
+}
+
+// =============================================================================
+// End-to-end: real upstream session expiry → automatic re-initialization
+//
+// These tests use a real streamable-HTTP MCP upstream (mark3labs server)
+// whose session ids are managed by a TTL-expirable SessionIdManager — the
+// exact contract the live gitnexus upstream enforces (sessions sweep after
+// idle TTL; unknown/missing session id → 404 "Session not found"). The
+// recovery must run the full machinery: transport clears the dead session
+// id → classifier fires → background ReconnectClient (fresh initialize →
+// new upstream session) → the same call replayed successfully.
+// =============================================================================
+
+// ttlSessionIdManager is a mark3labs SessionIdManager whose sessions the
+// test can expire wholesale — standing in for an upstream server's idle TTL
+// sweep (the live gitnexus upstream sweeps sessions idle for 30 minutes).
+type ttlSessionIdManager struct {
+	mu    sync.Mutex
+	valid map[string]struct{}
+}
+
+func newTTLSessionIdManager() *ttlSessionIdManager {
+	return &ttlSessionIdManager{valid: map[string]struct{}{}}
+}
+
+func (m *ttlSessionIdManager) Generate() string {
+	id := uuid.New().String()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.valid[id] = struct{}{}
+	return id
+}
+
+// Validate reports every id not currently tracked as terminated — an
+// expired or missing session id reads as terminated, so the streamable-HTTP
+// server answers 404 exactly like the live gitnexus upstream does after a
+// TTL sweep.
+func (m *ttlSessionIdManager) Validate(sessionID string) (isTerminated bool, err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	_, ok := m.valid[sessionID]
+	return !ok, nil
+}
+
+func (m *ttlSessionIdManager) Terminate(sessionID string) (isNotAllowed bool, err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.valid, sessionID)
+	return false, nil
+}
+
+// expireAll sweeps every live session — the test's stand-in for the upstream
+// TTL sweep firing.
+func (m *ttlSessionIdManager) expireAll() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.valid = make(map[string]struct{})
+}
+
+// buildSessionEnforcingUpstream starts a streamable-HTTP MCP upstream (one
+// "echo" tool) that enforces session ids through the given TTL manager.
+func buildSessionEnforcingUpstream(t *testing.T, mgr *ttlSessionIdManager) *httptest.Server {
+	t.Helper()
+
+	s := server.NewMCPServer("test-session-expiry", "1.0.0", server.WithToolCapabilities(true))
+	echoTool := mcp.NewTool("echo",
+		mcp.WithDescription("Echo tool"),
+		mcp.WithString("message", mcp.Required(), mcp.Description("message")),
+		// Explicitly safe annotations so the recovery path's replay gate
+		// (fails closed on missing hints) permits the auto-replay the test
+		// pins.
+		mcp.WithReadOnlyHintAnnotation(true),
+	)
+	s.AddTool(echoTool, func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		msg, _ := req.GetArguments()["message"].(string)
+		return mcp.NewToolResultText(msg), nil
+	})
+	streamable := server.NewStreamableHTTPServer(s,
+		server.WithSessionIdManagerResolver(server.NewDefaultSessionIdManagerResolver(mgr)),
+	)
+	ts := httptest.NewServer(streamable)
+	t.Cleanup(ts.Close)
+	return ts
+}
+
+func newSessionExpiryE2EConfig(id, serverURL string) *schemas.MCPClientConfig {
+	return &schemas.MCPClientConfig{
+		ID:                     id,
+		Name:                   id,
+		AuthType:               schemas.MCPAuthTypeHeaders,
+		ConnectionType:         schemas.MCPConnectionTypeHTTP,
+		ConnectionString:       schemas.NewSecretVar(serverURL),
+		ToolsToExecute:         []string{"*"},
+		NeedsSessionStickiness: schemas.Ptr(true),
+	}
+}
+
+// newSessionExpiryE2EManager connects a real manager to the upstream and
+// returns the manager plus a one-arg closure that executes the echo tool
+// through the full public seam (ExecuteChatTool).
+func newSessionExpiryE2EManager(t *testing.T, id, serverURL string) (*MCPManager, func() (*schemas.ChatMessage, *schemas.BifrostError)) {
+	t.Helper()
+	m := NewMCPManager(context.Background(), schemas.MCPConfig{}, nil, &MockLogger{}, nil)
+	config := newSessionExpiryE2EConfig(id, serverURL)
+	require.NoError(t, m.connectToMCPClient(context.Background(), config))
+	toolName := id + "-echo"
+	callTool := func() (*schemas.ChatMessage, *schemas.BifrostError) {
+		ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
+		return m.ExecuteChatTool(ctx, &schemas.ChatAssistantMessageToolCall{
+			Function: schemas.ChatAssistantMessageToolCallFunction{
+				Name:      &toolName,
+				Arguments: `{"message":"hello"}`,
+			},
+		})
+	}
+	return m, callTool
+}
+
+func TestExecuteTool_SessionExpiry_EndToEnd_AutoReinitializes(t *testing.T) {
+	ttl := newTTLSessionIdManager()
+	ts := buildSessionEnforcingUpstream(t, ttl)
+	_, callTool := newSessionExpiryE2EManager(t, "sess-e2e", ts.URL)
+
+	msg, bErr := callTool()
+	require.Nil(t, bErr, "baseline call must succeed on the freshly initialized session")
+	require.NotNil(t, msg)
+	require.Contains(t, *msg.Content.ContentStr, "hello")
+
+	// The upstream sweeps the session — the exact live failure: every later
+	// call carried a session id the server no longer knows. Without the fix
+	// this call fails permanently; with it, the gateway re-initializes and
+	// replays transparently.
+	ttl.expireAll()
+
+	msg2, bErr2 := callTool()
+	if bErr2 != nil {
+		t.Fatalf("the tool call must recover after the upstream session was swept, got: %s", bErr2.GetErrorString())
+	}
+	require.NotNil(t, msg2)
+	require.NotNil(t, msg2.Content.ContentStr)
+	require.Contains(t, *msg2.Content.ContentStr, "hello")
+}
+
+func TestConnectionChecker_SessionExpiry_TriggersReconnect(t *testing.T) {
+	ttl := newTTLSessionIdManager()
+	ts := buildSessionEnforcingUpstream(t, ttl)
+	m, callTool := newSessionExpiryE2EManager(t, "sess-check", ts.URL)
+	config := newSessionExpiryE2EConfig("sess-check", ts.URL)
+
+	_, bErr := callTool()
+	require.Nil(t, bErr)
+
+	ttl.expireAll()
+
+	// One checker probe: ping/list_tools on the now-expired session must
+	// fail (false) and trigger the background reconnect itself — no tool
+	// traffic needed for the connection to heal.
+	checker := NewClientConnectionChecker(m, config.ID, time.Minute, true, &MockLogger{})
+	_, healthy := checker.performCheck()
+	require.False(t, healthy, "the probe must fail while the upstream session is expired")
+
+	require.Eventually(t, func() bool {
+		m.mu.RLock()
+		defer m.mu.RUnlock()
+		st, ok := m.clientMap[config.ID]
+		return ok && st.State == schemas.MCPConnectionStateHealthy
+	}, 10*time.Second, 50*time.Millisecond, "the session-expiry reconnect must restore the client to Healthy")
+
+	msg, bErr := callTool()
+	require.Nil(t, bErr, "the next tool call must succeed on the re-initialized session")
+	require.NotNil(t, msg)
 }

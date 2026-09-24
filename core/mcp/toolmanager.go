@@ -783,6 +783,23 @@ func (m *ToolsManager) executeToolInternal(
 			}
 		}
 
+		// An upstream MCP session Bifrost held has expired (the server's idle
+		// TTL sweep removed it, or the server restarted): heal the connection
+		// with a fresh initialize and replay the SAME call when the tool's
+		// annotations permit. The transport-level rejections (404 / missing
+		// or expired session id) happen before the tool runs, but the same
+		// classifier also matches JSON-RPC error text — which a tool's own
+		// business logic could emit — so the replay still passes the same
+		// idempotency gate the auth path uses. See attemptSessionExpiryRecovery.
+		if isUpstreamSessionExpiredError(callErr) {
+			if retryResponse, recovered := m.attemptSessionExpiryRecovery(ctx, toolName, callRequest, executionConfig, toolExecutionTimeout); recovered {
+				responseText := extractTextFromMCPResponse(retryResponse, toolName)
+				// Same IsError rule as the auth-recovery path above.
+				retryIsToolError := retryResponse != nil && retryResponse.IsError
+				return createToolResponseMessage(*toolCall, responseText, retryIsToolError), executionConfig.Name, sanitizedToolName, nil
+			}
+		}
+
 		m.logger.Error("%s Tool execution failed for %s via client %s: %v", MCPLogPrefix, toolName, executionConfig.Name, callErr)
 		return nil, "", "", fmt.Errorf("MCP tool call failed for %s: %v: %w", toolName, callErr, ErrMCPToolCallFailed)
 	}
@@ -796,6 +813,46 @@ func (m *ToolsManager) executeToolInternal(
 	// the same reason extractTextFromMCPResponse checks it above.
 	isToolError := toolResponse != nil && toolResponse.IsError
 	return createToolResponseMessage(*toolCall, responseText, isToolError), executionConfig.Name, sanitizedToolName, nil
+}
+
+// toolReplayOptedOut reports whether the tool's own annotations opt it out
+// of an automatic same-call replay after connection healing (auth failure or
+// upstream session expiry). Only the replay is gated; healing itself always
+// runs. The gate fails closed on missing hints, matching the MCP spec's own
+// defaults (destructiveHint defaults to true, idempotentHint to false, each
+// only meaningful when readOnlyHint is false) rather than this package's
+// unrelated Go zero-value default of false for both: an unannotated tool is
+// common (both hints are optional per spec) and treating it as safe to
+// replay would auto-replay an actually-destructive call whose upstream error
+// text merely looked like a recoverable failure.
+func (m *ToolsManager) toolReplayOptedOut(toolName string) bool {
+	state := m.clientManager.GetClientForTool(toolName)
+	if state == nil {
+		return false
+	}
+	tool, ok := state.ToolMap[toolName]
+	if !ok {
+		return false
+	}
+	readOnly := false
+	destructive := true
+	idempotent := false
+	if tool.Annotations != nil {
+		if tool.Annotations.ReadOnlyHint != nil {
+			readOnly = *tool.Annotations.ReadOnlyHint
+		}
+		if tool.Annotations.DestructiveHint != nil {
+			destructive = *tool.Annotations.DestructiveHint
+		}
+		if tool.Annotations.IdempotentHint != nil {
+			idempotent = *tool.Annotations.IdempotentHint
+		}
+	}
+	if !readOnly && destructive && !idempotent {
+		m.logger.Debug("%s Skipping auto-replay for destructive, non-idempotent tool %s", MCPLogPrefix, toolName)
+		return true
+	}
+	return false
 }
 
 // attemptAuthFailureRecovery reacts to a clean upstream auth rejection
@@ -828,43 +885,13 @@ func (m *ToolsManager) attemptAuthFailureRecovery(
 ) (*mcp.CallToolResult, bool) {
 	state := m.clientManager.GetClientForTool(toolName)
 
-	// Safety opt-out: a spurious retry against a destructive, non-idempotent
+	// Safety opt-out: a spurious replay against a destructive, non-idempotent
 	// tool could cause a real-world side effect twice. This gates only the
-	// retry; on the shared path the connection is still healed first.
-	//
-	// Fail closed on missing hints, matching the MCP spec's own defaults
-	// (destructiveHint defaults to true, idempotentHint to false, each only
-	// meaningful when readOnlyHint is false) rather than this package's
-	// unrelated Go zero-value default of false for both: an unannotated tool
-	// is common (both hints are optional per spec) and treating it as safe
-	// to retry would auto-retry an actually-destructive tool whose server
-	// simply never set the hint.
-	retryOptedOut := false
-	if state != nil {
-		if tool, ok := state.ToolMap[toolName]; ok {
-			readOnly := false
-			destructive := true
-			idempotent := false
-			if tool.Annotations != nil {
-				if tool.Annotations.ReadOnlyHint != nil {
-					readOnly = *tool.Annotations.ReadOnlyHint
-				}
-				if tool.Annotations.DestructiveHint != nil {
-					destructive = *tool.Annotations.DestructiveHint
-				}
-				if tool.Annotations.IdempotentHint != nil {
-					idempotent = *tool.Annotations.IdempotentHint
-				}
-			}
-			if !readOnly && destructive && !idempotent {
-				m.logger.Debug("%s Skipping auth-failure auto-retry for destructive, non-idempotent tool %s", MCPLogPrefix, toolName)
-				retryOptedOut = true
-			}
-		}
-	}
+	// replay; on the shared path the connection is still healed first.
+	retryOptedOut := m.toolReplayOptedOut(toolName)
 
 	if !m.credStore.RequiresPerCallConnection(executionConfig) {
-		return m.recoverSharedConnection(ctx, toolName, callRequest, executionConfig, toolExecutionTimeout, retryOptedOut)
+		return m.recoverSharedConnection(ctx, toolName, callRequest, executionConfig, toolExecutionTimeout, retryOptedOut, "an upstream auth rejection")
 	}
 
 	if retryOptedOut {
@@ -909,8 +936,47 @@ func (m *ToolsManager) attemptAuthFailureRecovery(
 	return retryResponse, true
 }
 
+// attemptSessionExpiryRecovery reacts to the upstream MCP session Bifrost's
+// persistent connection held being gone — the server's idle TTL sweep removed
+// it, or the upstream restarted. The rejection happens at the upstream's
+// session-validation layer, before the tool runs, but the classifier also
+// matches JSON-RPC error text (which a tool's own business logic could emit),
+// so the replay is gated on the tool's idempotency annotations exactly like
+// attemptAuthFailureRecovery: fail closed on missing hints.
+//
+// Sessions are a persistent-connection concept: per-call connections (per-user
+// auth types) establish a fresh, initialized connection for every call, so an
+// expiry cannot persist between calls there and the original error surfaces
+// immediately. For shared connections the mechanics mirror the auth path:
+// trigger a background ReconnectClient — a fresh transport whose initialize
+// registers a new upstream session — wait a bounded budget for it, then retry
+// the SAME call exactly once on the healed connection.
+//
+// healReason is the label stamped on the background reconnect's logs, so an
+// operator can tell the auth-failure heal from the session-expiry one.
+//
+// Returns (response, true) only when a synchronous retry ran and actually
+// succeeded; every other outcome (opt-out gate, reconnect timeout or failure,
+// retry-also-failed) is (nil, false), so the original session-expiry failure
+// surfaces while the heal keeps running in the background and the NEXT call
+// succeeds.
+func (m *ToolsManager) attemptSessionExpiryRecovery(
+	ctx *schemas.BifrostContext,
+	toolName string,
+	callRequest mcp.CallToolRequest,
+	executionConfig *schemas.MCPClientConfig,
+	toolExecutionTimeout time.Duration,
+) (*mcp.CallToolResult, bool) {
+	if executionConfig == nil || m.credStore.RequiresPerCallConnection(executionConfig) {
+		return nil, false
+	}
+	retryOptedOut := m.toolReplayOptedOut(toolName)
+	return m.recoverSharedConnection(ctx, toolName, callRequest, executionConfig, toolExecutionTimeout, retryOptedOut, "an upstream MCP session expiry")
+}
+
 // recoverSharedConnection handles the shared-connection half of
 // attemptAuthFailureRecovery. It always triggers the background force-refresh
+// + reconnect first, so the connection heals even when retryOptedOut
 // + reconnect first, so the connection heals even when retryOptedOut
 // suppresses the retry. It then waits up to MCPSharedAuthRetryReconnectBudget
 // (further capped by the caller's remaining deadline) for the reconnect to
@@ -926,8 +992,9 @@ func (m *ToolsManager) recoverSharedConnection(
 	executionConfig *schemas.MCPClientConfig,
 	toolExecutionTimeout time.Duration,
 	retryOptedOut bool,
+	healReason string,
 ) (*mcp.CallToolResult, bool) {
-	reconnectResult := m.triggerBackgroundReconnect(executionConfig)
+	reconnectResult := m.triggerBackgroundReconnect(executionConfig, healReason)
 	if retryOptedOut || reconnectResult == nil || executionConfig == nil {
 		return nil, false
 	}
@@ -964,7 +1031,7 @@ func (m *ToolsManager) recoverSharedConnection(
 		// the background either way.
 		return nil, false
 	case <-timer.C:
-		m.logger.Debug("%s Reconnect for %s did not finish within the retry budget; surfacing the original auth failure", MCPLogPrefix, executionConfig.Name)
+		m.logger.Debug("%s Reconnect for %s did not finish within the retry budget; surfacing the original failure", MCPLogPrefix, executionConfig.Name)
 		return nil, false
 	}
 
@@ -990,7 +1057,7 @@ func (m *ToolsManager) recoverSharedConnection(
 	}
 	conn, release, err := m.clientManager.AcquireClientConn(ctx, state)
 	if err != nil {
-		m.logger.Debug("%s Auth-failure retry could not acquire the reconnected client for %s: %v", MCPLogPrefix, toolName, err)
+		m.logger.Debug("%s Connection-heal retry could not acquire the reconnected client for %s: %v", MCPLogPrefix, toolName, err)
 		return nil, false
 	}
 	defer release()
@@ -1002,11 +1069,11 @@ func (m *ToolsManager) recoverSharedConnection(
 	retryResponse, retryErr := conn.CallTool(retryCtx, callRequest)
 	schemas.AddUpstreamLatency(ctx, time.Since(retryStart))
 	if retryErr != nil {
-		m.logger.Debug("%s Auth-failure retry after reconnect also failed for %s: %v", MCPLogPrefix, toolName, retryErr)
+		m.logger.Debug("%s Connection-heal retry after reconnect also failed for %s: %v", MCPLogPrefix, toolName, retryErr)
 		return nil, false
 	}
 
-	m.logger.Debug("%s Auth-failure retry after reconnect succeeded for %s", MCPLogPrefix, toolName)
+	m.logger.Debug("%s Connection-heal retry after reconnect succeeded for %s", MCPLogPrefix, toolName)
 	return retryResponse, true
 }
 
@@ -1024,7 +1091,7 @@ func (m *ToolsManager) recoverSharedConnection(
 // The returned channel (buffered, never blocks the goroutine) receives the
 // ReconnectClient outcome exactly once, letting the caller wait a bounded
 // budget for the connection to heal. nil is returned only for a nil config.
-func (m *ToolsManager) triggerBackgroundReconnect(config *schemas.MCPClientConfig) <-chan error {
+func (m *ToolsManager) triggerBackgroundReconnect(config *schemas.MCPClientConfig, reason string) <-chan error {
 	if config == nil {
 		return nil
 	}
@@ -1046,9 +1113,9 @@ func (m *ToolsManager) triggerBackgroundReconnect(config *schemas.MCPClientConfi
 
 		reconnectErr := m.clientManager.ReconnectClient(clientID)
 		if reconnectErr != nil {
-			m.logger.Debug("%s Background reconnect triggered by an upstream auth rejection did not complete for %s: %v", MCPLogPrefix, clientName, reconnectErr)
+			m.logger.Debug("%s Background reconnect triggered by %s did not complete for %s: %v", MCPLogPrefix, reason, clientName, reconnectErr)
 		} else {
-			m.logger.Info("%s Background reconnect triggered by an upstream auth rejection succeeded for %s", MCPLogPrefix, clientName)
+			m.logger.Info("%s Background reconnect triggered by %s succeeded for %s", MCPLogPrefix, reason, clientName)
 		}
 		result <- reconnectErr
 	}()

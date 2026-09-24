@@ -15,6 +15,7 @@ import (
 	"unicode"
 
 	"github.com/mark3labs/mcp-go/client"
+	"github.com/mark3labs/mcp-go/client/transport"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/maximhq/bifrost/core/schemas"
 )
@@ -350,6 +351,51 @@ func isTransientToolCallError(err error) bool {
 	}
 	for _, transientErr := range transientErrorSubstrings {
 		if strings.Contains(errStr, transientErr) {
+			return true
+		}
+	}
+	return false
+}
+
+// isUpstreamSessionExpiredError reports whether an upstream MCP call error
+// means the session Bifrost's client held with the upstream server is gone —
+// the server's idle TTL sweep or a restart dropped it — so the connection
+// must be re-initialized (fresh initialize → new upstream session) before
+// the same call can succeed.
+//
+// Two distinct wire shapes exist (both observed live against a stateful
+// upstream with a 30-minute idle TTL sweep):
+//
+//   - The client still sends the (now dead) session id: the upstream answers
+//     HTTP 404 and the mcp-go streamable transport clears its session id and
+//     returns ErrSessionTerminated, which survives wrapping via errors.Is.
+//   - The client already lost the session id (after that first 404, or a
+//     proxy stripped the header): the upstream answers HTTP 400 with a
+//     JSON-RPC error body. No sentinel survives — only the server's message
+//     text does — so classification falls back to substring matching on the
+//     known phrasings.
+//
+// Like isAuthFailureErrorText this matches on text because mcp-go flattens
+// HTTP statuses and JSON-RPC errors into plain error strings by the time a
+// CallTool/ping/list_tools error reaches the recovery seam.
+func isUpstreamSessionExpiredError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, transport.ErrSessionTerminated) {
+		return true
+	}
+	lower := strings.ToLower(err.Error())
+	for _, needle := range []string{
+		"session terminated (404)",          // mcp-go streamable sentinel text
+		"session not found",                 // spec-style 404 JSON-RPC body
+		"session expired",                   // generic TTL wording
+		"invalid session",                   // stateful mark3labs upstreams ("Invalid session ID")
+		"first request must be initialize",  // gitnexus-style 400 (observed live)
+		"no session id provided",            // gitnexus-style 400 (observed live)
+		"mcp-session-id header is required", // TS-SDK-style 400
+	} {
+		if strings.Contains(lower, needle) {
 			return true
 		}
 	}
