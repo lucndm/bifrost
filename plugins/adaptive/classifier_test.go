@@ -89,9 +89,10 @@ func TestClassifyCustomRulesReplaceDefaults(t *testing.T) {
 
 func TestBackoffEscalatesAndCaps(t *testing.T) {
 	base := int64(1000)
-	assert.Equal(t, int64(1000), backoffMs(base, 1))
-	assert.Equal(t, int64(2000), backoffMs(base, 2))
-	assert.Equal(t, int64(4000), backoffMs(base, 3))
-	assert.Equal(t, maxCooldownMs, backoffMs(base, 20), "must cap at maxCooldownMs")
-	assert.Equal(t, defaultServerErrorCooldown, backoffMs(0, 1), "non-positive base falls back")
+	assert.Equal(t, int64(1000), backoffMs(base, 0, 1))
+	assert.Equal(t, int64(2000), backoffMs(base, 0, 2))
+	assert.Equal(t, int64(4000), backoffMs(base, 0, 3))
+	assert.Equal(t, defaultMaxCooldownMs, backoffMs(base, 0, 20), "must cap at maxCooldownMs")
+	assert.Equal(t, int64(60000), backoffMs(base, 60000, 7), "custom cap bounds the backoff")
+	assert.Equal(t, defaultServerErrorCooldown, backoffMs(0, 0, 1), "non-positive base falls back")
 }

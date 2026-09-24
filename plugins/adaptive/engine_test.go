@@ -13,7 +13,7 @@ import (
 // deterministicEngine returns an engine whose picks follow a fixed seed.
 func deterministicEngine(t *testing.T, seed int64) *Engine {
 	t.Helper()
-	e := NewEngine(nil, DefaultRecomputeInterval, nil)
+	e := NewEngine(nil, DefaultRecomputeInterval, nil, 0)
 	e.rand = rand.New(rand.NewSource(seed))
 	return e
 }
@@ -176,7 +176,7 @@ func TestPickKeyExcludesCoolingKeys(t *testing.T) {
 }
 
 func TestEngineStopIsIdempotent(t *testing.T) {
-	e := NewEngine(nil, DefaultRecomputeInterval, nil)
+	e := NewEngine(nil, DefaultRecomputeInterval, nil, 0)
 	e.Start(t.Context())
 	e.Stop()
 	e.Stop() // second call must not panic or hang

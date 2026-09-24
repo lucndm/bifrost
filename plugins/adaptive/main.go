@@ -82,6 +82,13 @@ type Config struct {
 	// default (5000). Read at plugin start; changing it takes effect on the
 	// next plugin reload.
 	RecomputeIntervalMs *int `json:"recompute_interval_ms,omitempty"`
+	// MaxCooldownMs bounds the exponential backoff for cooldown-classified
+	// errors. 0 or negative keeps the default (240000 = 4 minutes). Raise it
+	// when routes hit long quota windows (weekly/monthly limits) so the
+	// exhausted route is probed hourly instead of every 4 minutes. A precise
+	// provider Retry-After always overrides the estimate regardless of this
+	// bound.
+	MaxCooldownMs *int64 `json:"max_cooldown_ms,omitempty"`
 	// ErrorRules replaces the default error-classification table. Ordered,
 	// first match wins. Empty keeps the defaults.
 	ErrorRules []ErrorRule `json:"error_rules,omitempty"`
@@ -227,11 +234,15 @@ func Init(_ context.Context, config *Config, logger schemas.Logger) (*AdaptivePl
 	}
 	interval := DefaultRecomputeInterval
 	var rules []ErrorRule
+	var maxCooldownMs int64
 	if config != nil {
 		if config.RecomputeIntervalMs != nil && *config.RecomputeIntervalMs > 0 {
 			interval = time.Duration(*config.RecomputeIntervalMs) * time.Millisecond
 		}
 		rules = config.ErrorRules
+		if config.MaxCooldownMs != nil && *config.MaxCooldownMs > 0 {
+			maxCooldownMs = *config.MaxCooldownMs
+		}
 	}
 	p := &AdaptivePlugin{
 		logger: logger,
@@ -239,7 +250,7 @@ func Init(_ context.Context, config *Config, logger schemas.Logger) (*AdaptivePl
 	s := resolveSwitches(config)
 	p.switches.Store(&s)
 	p.config.Store(newConfigView(config, interval, rules))
-	p.engine = NewEngine(logger, interval, rules)
+	p.engine = NewEngine(logger, interval, rules, maxCooldownMs)
 	p.engine.Start(context.Background())
 	logger.Debug("[Adaptive] plugin initialized: direction_selection=%v route_selection=%v append_fallbacks=%v recompute=%s",
 		s.directionSelection, s.routeSelection, s.appendFallbacks, interval)

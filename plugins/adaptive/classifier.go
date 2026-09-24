@@ -76,7 +76,7 @@ const (
 	defaultAuthErrorCooldownMs = int64(30_000)
 	defaultBannedCooldownMs    = int64(60_000)
 	defaultNetworkCooldownMs   = int64(1000)
-	maxCooldownMs              = int64(240_000)
+	defaultMaxCooldownMs       = int64(240_000)
 )
 
 // DefaultErrorRules is the shipped classification table, ordered first-match

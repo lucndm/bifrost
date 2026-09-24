@@ -9,7 +9,7 @@ import (
 
 // newTestTracker returns a tracker with a controllable clock.
 func newTestTracker() (*Tracker, *func() time.Time) {
-	t := NewTracker()
+	t := NewTracker(0)
 	base := time.Now()
 	clock := func() time.Time { return base }
 	t.now = func() time.Time { return clock() }

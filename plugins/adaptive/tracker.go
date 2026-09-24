@@ -76,14 +76,23 @@ type Tracker struct {
 	routes   map[routeKey]*routeMetrics
 	keyLocks map[keyLockKey]*keyLockState
 	now      func() time.Time
+	// maxCooldownMs bounds the exponential backoff. Configurable so a
+	// deployment can cover long quota windows (weekly/monthly limits) without
+	// probing the exhausted route every defaultMaxCooldownMs.
+	maxCooldownMs int64
 }
 
-// NewTracker returns an empty tracker using the real clock.
-func NewTracker() *Tracker {
+// NewTracker returns an empty tracker using the real clock. maxCooldownMs <= 0
+// falls back to defaultMaxCooldownMs.
+func NewTracker(maxCooldownMs int64) *Tracker {
+	if maxCooldownMs <= 0 {
+		maxCooldownMs = defaultMaxCooldownMs
+	}
 	return &Tracker{
-		routes:   make(map[routeKey]*routeMetrics),
-		keyLocks: make(map[keyLockKey]*keyLockState),
-		now:      time.Now,
+		routes:        make(map[routeKey]*routeMetrics),
+		keyLocks:      make(map[keyLockKey]*keyLockState),
+		now:           time.Now,
+		maxCooldownMs: maxCooldownMs,
 	}
 }
 
@@ -135,7 +144,7 @@ func (t *Tracker) Observe(provider, model, keyName string, failed bool, latencyM
 			} else {
 				m.strikes++
 				m.consecSuccess = 0
-				m.cooldownMs = backoffMs(cls.CooldownMs, m.strikes)
+				m.cooldownMs = backoffMs(cls.CooldownMs, t.maxCooldownMs, m.strikes)
 				m.cooldownUntil = now.Add(time.Duration(m.cooldownMs) * time.Millisecond)
 			}
 			if cls.Scope == ScopeKey {
@@ -282,21 +291,24 @@ func lerp(current, sample, alpha float64) float64 {
 }
 
 // backoffMs computes the exponential backoff for a strike count:
-// base * 2^(strikes-1), capped at maxCooldownMs. Strike 1 waits the base, so
-// a single transient failure costs one quiet cycle, not an exile.
-func backoffMs(baseMs int64, strikes int) int64 {
+// base * 2^(strikes-1), capped at capMs. Strike 1 waits the base, so a single
+// transient failure costs one quiet cycle, not an exile.
+func backoffMs(baseMs, capMs int64, strikes int) int64 {
 	if baseMs <= 0 {
 		baseMs = defaultServerErrorCooldown
 	}
 	if strikes < 1 {
 		strikes = 1
 	}
+	if capMs <= 0 {
+		capMs = defaultMaxCooldownMs
+	}
 	ms := baseMs
-	for i := 1; i < strikes && ms < maxCooldownMs; i++ {
+	for i := 1; i < strikes && ms < capMs; i++ {
 		ms *= 2
 	}
-	if ms > maxCooldownMs {
-		ms = maxCooldownMs
+	if ms > capMs {
+		ms = capMs
 	}
 	return ms
 }

@@ -64,13 +64,14 @@ type Engine struct {
 }
 
 // NewEngine builds an engine. interval <= 0 means DefaultRecomputeInterval.
-// rules nil/empty means the default classification table.
-func NewEngine(logger schemas.Logger, interval time.Duration, rules []ErrorRule) *Engine {
+// rules nil/empty means the default classification table. maxCooldownMs <= 0
+// means defaultMaxCooldownMs.
+func NewEngine(logger schemas.Logger, interval time.Duration, rules []ErrorRule, maxCooldownMs int64) *Engine {
 	if interval <= 0 {
 		interval = DefaultRecomputeInterval
 	}
 	e := &Engine{
-		tracker:           NewTracker(),
+		tracker:           NewTracker(maxCooldownMs),
 		logger:            logger,
 		recomputeInterval: interval,
 		rand:              rand.New(rand.NewSource(time.Now().UnixNano())),
